@@ -28,8 +28,16 @@ export function ConversationSidebar() {
         <span>New conversation</span>
       </button>
 
-      <nav aria-label="Recent conversations" className="glass-scroll min-h-0 flex-1 overflow-y-auto pr-1">
-        <div className="space-y-3.5 pt-1">
+      <div className="relative min-h-0 flex-1">
+        <div
+          aria-hidden="true"
+          className="diffusion-scrim absolute -inset-x-2 -inset-y-1 rounded-[18px]"
+        />
+        <nav
+          aria-label="Recent conversations"
+          className="glass-scroll relative h-full overflow-y-auto pr-1"
+        >
+          <div className="space-y-3.5 pt-1">
           {CONVERSATION_GROUPS.map((group) => (
             <section key={group.label}>
               <h2 className="mb-1.5 px-1 text-[10px] font-semibold tracking-wider uppercase glass-text-subtle">
@@ -60,9 +68,10 @@ export function ConversationSidebar() {
                 })}
               </ul>
             </section>
-          ))}
-        </div>
-      </nav>
+            ))}
+          </div>
+        </nav>
+      </div>
     </aside>
   );
 }

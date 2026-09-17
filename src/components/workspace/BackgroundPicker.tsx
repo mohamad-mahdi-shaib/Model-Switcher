@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { BACKGROUNDS, type BackgroundId } from "@/lib/backgrounds";
+import {
+  BACKGROUND_COLLECTIONS,
+  BACKGROUNDS,
+  GLASS_STYLES,
+  type BackgroundId,
+  type GlassStyleId,
+} from "@/lib/backgrounds";
 import {
   CheckIcon,
   ImageIcon,
@@ -12,15 +18,27 @@ import {
 type BackgroundPickerProps = {
   open: boolean;
   activeId: BackgroundId;
+  activeGlass: GlassStyleId;
   onOpenChange: (open: boolean) => void;
   onSelect: (id: BackgroundId) => void;
+  onSelectGlass: (id: GlassStyleId) => void;
 };
+
+function SectionHeading({ children }: { children: string }) {
+  return (
+    <h3 className="px-0.5 text-[9.5px] font-semibold tracking-[0.12em] uppercase glass-text-subtle">
+      {children}
+    </h3>
+  );
+}
 
 export function BackgroundPicker({
   open,
   activeId,
+  activeGlass,
   onOpenChange,
   onSelect,
+  onSelectGlass,
 }: BackgroundPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -53,7 +71,6 @@ export function BackgroundPicker({
     };
   }, [open, onOpenChange]);
 
-  // Move focus into the popover when it opens.
   useEffect(() => {
     if (open) {
       panelRef.current?.focus();
@@ -76,8 +93,8 @@ export function BackgroundPicker({
 
       {open ? (
         <div
-          aria-label="Ambient backdrops"
-          className="glass-modal absolute right-0 top-[42px] z-50 flex w-[320px] flex-col gap-3 rounded-2xl p-4"
+          aria-label="Appearance"
+          className="glass-modal glass-scroll absolute right-0 top-[42px] z-50 flex max-h-[min(70vh,560px)] w-[336px] flex-col gap-3 overflow-y-auto rounded-2xl p-4"
           ref={panelRef}
           role="dialog"
           tabIndex={-1}
@@ -86,11 +103,11 @@ export function BackgroundPicker({
             <div className="flex items-center gap-1.5">
               <PaletteIcon className="h-3.5 w-3.5 glass-text-dark" />
               <span className="text-[12.5px] font-semibold tracking-tight glass-text-dark">
-                Ambient Backdrops
+                Appearance
               </span>
             </div>
             <button
-              aria-label="Close background picker"
+              aria-label="Close appearance picker"
               className="focus-glass flex h-5 w-5 items-center justify-center rounded-full glass-text-dark transition-colors hover:bg-white/20"
               onClick={() => {
                 onOpenChange(false);
@@ -102,45 +119,101 @@ export function BackgroundPicker({
             </button>
           </div>
 
-          <div
-            aria-label="Background preset"
-            className="flex flex-col gap-1.5"
-            role="radiogroup"
+          {/* --- Section 1: background ------------------------------------ */}
+          <section aria-label="Background" className="flex flex-col gap-2">
+            <SectionHeading>Background</SectionHeading>
+
+            <div
+              aria-label="Background"
+              className="flex flex-col gap-2.5"
+              role="radiogroup"
+            >
+              {BACKGROUND_COLLECTIONS.map((collection) => (
+                <div className="flex flex-col gap-1.5" key={collection}>
+                  <p className="px-0.5 text-[9px] font-medium tracking-wider uppercase glass-text-subtle opacity-80">
+                    {collection}
+                  </p>
+                  {BACKGROUNDS.filter(
+                    (background) => background.collection === collection,
+                  ).map((background) => {
+                    const isActive = background.id === activeId;
+                    return (
+                      <button
+                        aria-checked={isActive}
+                        className="bg-card focus-glass flex w-full cursor-pointer items-center justify-between rounded-xl p-1.5 text-left"
+                        key={background.id}
+                        onClick={() => onSelect(background.id)}
+                        role="radio"
+                        type="button"
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <span
+                            className="h-8 w-8 shrink-0 rounded-lg border border-white/70 shadow-sm"
+                            style={{ background: background.swatch }}
+                          />
+                          <span className="block">
+                            <span className="block text-[11.5px] font-semibold leading-tight glass-text-dark">
+                              {background.name}
+                            </span>
+                            <span className="block text-[9.5px] glass-text-subtle">
+                              {background.description}
+                            </span>
+                          </span>
+                        </span>
+                        {isActive ? (
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white/90 text-[#1a1c22] shadow-sm">
+                            <CheckIcon className="h-2.5 w-2.5" />
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* --- Section 2: glass appearance ------------------------------ */}
+          <section
+            aria-label="Glass appearance"
+            className="flex flex-col gap-2 border-t border-white/30 pt-3"
           >
-            {BACKGROUNDS.map((background) => {
-              const isActive = background.id === activeId;
-              return (
-                <button
-                  aria-checked={isActive}
-                  className="bg-card focus-glass flex w-full cursor-pointer items-center justify-between rounded-xl p-1.5 text-left"
-                  key={background.id}
-                  onClick={() => onSelect(background.id)}
-                  role="radio"
-                  type="button"
-                >
-                  <span className="flex items-center gap-2.5">
-                    <span
-                      className="h-8 w-8 shrink-0 rounded-lg border border-white/70 shadow-sm"
-                      style={{ background: background.swatch }}
-                    />
-                    <span className="block">
-                      <span className="block text-[11.5px] font-semibold leading-tight glass-text-dark">
-                        {background.name}
+            <SectionHeading>Glass appearance</SectionHeading>
+
+            <div
+              aria-label="Glass appearance"
+              className="grid grid-cols-2 gap-1.5"
+              role="radiogroup"
+            >
+              {GLASS_STYLES.map((style) => {
+                const isActive = style.id === activeGlass;
+                return (
+                  <button
+                    aria-checked={isActive}
+                    className="bg-card focus-glass flex cursor-pointer flex-col gap-1.5 rounded-xl p-2 text-left"
+                    key={style.id}
+                    onClick={() => onSelectGlass(style.id)}
+                    role="radio"
+                    type="button"
+                  >
+                    <span className="flex items-center justify-between">
+                      <span className="text-[11.5px] font-semibold leading-tight glass-text-dark">
+                        {style.name}
                       </span>
-                      <span className="block text-[9.5px] glass-text-subtle">
-                        {background.description}
-                      </span>
+                      {isActive ? (
+                        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white/90 text-[#1a1c22] shadow-sm">
+                          <CheckIcon className="h-2.5 w-2.5" />
+                        </span>
+                      ) : null}
                     </span>
-                  </span>
-                  {isActive ? (
-                    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-white/90 text-[#1a1c22] shadow-sm">
-                      <CheckIcon className="h-2.5 w-2.5" />
+                    <span className="block text-[9.5px] leading-snug glass-text-subtle">
+                      {style.description}
                     </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </div>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
         </div>
       ) : null}
     </div>

@@ -96,6 +96,75 @@ The reference contains placeholder text from the design tool. Replaced with:
 - Disabled controls carry a `title` explaining which milestone enables them.
 - `prefers-reduced-motion` disables transitions and the card hover lift.
 
+## Backgrounds and glass appearance
+
+The picker has two independent sections. Background and glass style are
+separate state; either can change without touching the other. Defaults are
+Warm Studio + Classic.
+
+**Background — Ambient (5).** The original CSS-gradient presets, unchanged.
+
+**Background — Luxury (4).** Champagne Silk, Emerald Onyx, Amethyst Bloom,
+Amber Aurora. These are bundled local SVG artwork in `public/backgrounds/`,
+hand-authored for this project — layered gradient blooms plus an feTurbulence
+displacement that suggests silk folds and flowing pigment. They are **not**
+photography or stock imagery, and not CSS-gradient-only placeholders either:
+they are real local image assets, procedurally drawn. Each keeps a quieter,
+lower-contrast region through the middle so panel text sits on calm ground.
+No remote requests, no image libraries.
+
+Ink contrast is driven by `data-tone` on the workspace root rather than a list
+of preset names, so any background added later only has to declare its tone.
+
+**Glass — Classic.** The approved material from `references/code.html`,
+untouched.
+
+**Glass — Ultra Clear.** Refined against
+`references/IMG_3830_files/IMG_3830.jpeg` (the lower of the two renders; the
+phone chrome, video overlay and glass sculpture are out of scope):
+
+- Panel fill is a rim-weighted radial bottoming out at ~0.008 alpha through
+  the centre, so there is no milky fill.
+- Backdrop blur 3px, down from Classic's 16px, so background shapes stay
+  identifiable rather than smeared.
+- Bevel from narrow contours: a bright 1px top edge, a darker lower edge, and
+  a faint inner rim reading as glass thickness.
+- `::before` carries **uneven** specular — brightest at top-right, strong at
+  bottom-right, softer on the left — masked to a `--rim`-thick ring.
+- `::after` carries prismatic hints confined to two short rim segments by
+  narrow gradient stops. Never a full rainbow border or a panel-wide tint.
+- Both pseudo-elements are `pointer-events: none` and rim-masked, so they
+  cannot intercept clicks or cover focus rings.
+
+These are **visual approximations**. Nothing here computes refraction,
+dispersion or caustics.
+
+### Why the centre looked milky
+
+Worth recording, because the panel fill was the wrong suspect. Ultra Clear's
+centre was being flattened by `.diffusion-scrim` — the readability layer — at
+`blur(16px)` and 30–38% alpha, stretched across the whole message column and
+the whole sidebar nav. It covered most of the panel interior, so lowering the
+panel fill could not have revealed anything.
+
+It is now `blur(5px)` at 13% (light) / 20% (dark), with a radial mask that
+fades it out toward the edges, making it a local treatment behind text instead
+of a wash over the panel. Text itself is never blurred or faded — only the
+background behind it.
+
+Menus keep their strong diffusion (`.glass-modal`, `blur(44px)`) regardless of
+glass style, so chat text never interferes with menu labels.
+
+### Pointer glint
+
+`useEdgeGlint` writes pointer position into two CSS custom properties on one
+decorative element, coalesced to one write per animation frame, with the host
+rect cached on enter. It never calls `setState`, so pointer movement does not
+re-render the component tree. It is disabled unless the device has a fine
+hover pointer, and disabled under `prefers-reduced-motion`; CSS supplies a
+static highlight in both cases. There is no idle animation — the rim only
+changes while the pointer moves.
+
 ## Known limitations
 
 - **Desktop only.** The sidebar is hidden below the `md` breakpoint. The mobile
@@ -103,7 +172,15 @@ The reference contains placeholder text from the design tool. Replaced with:
 - **Static data.** `src/lib/sample-data.ts` is hardcoded. Nothing persists.
 - **Non-functional controls:** conversation title dropdown, model selector, send
   button, sidebar rows, "New conversation". All visibly disabled or inert.
-- **No visual browser inspection was performed.** No browser automation is
-  installed and the connection made installing one impractical. Layout fit at
-  1366×768 was reasoned from the box model and verified against rendered markup
-  and compiled CSS, not observed in a browser.
+- **No visual browser inspection was performed at any point.** No browser
+  automation is installed and the connection made installing one impractical.
+  Layout fit at 1366×768, and the appearance of both glass materials across
+  backgrounds, were reasoned from the box model and verified against rendered
+  markup and compiled CSS — never observed in a browser. The Luxury artwork in
+  particular has not been seen rendered.
+- **Two background layers still flatten the panel centre**, and both are shared
+  with Classic so they were left alone: the ambient orbs (90–130px blur) on the
+  gradient presets, and the `calm` centre wash inside each Luxury SVG. If Ultra
+  Clear should reveal more detail, reducing the SVG `calm` stop opacity is the
+  next lever — but it changes how Classic looks on those backgrounds too, so it
+  is a deliberate decision rather than a tweak.

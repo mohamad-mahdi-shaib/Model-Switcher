@@ -2,7 +2,7 @@
 
 import { BackgroundPicker } from "@/components/workspace/BackgroundPicker";
 import { ChevronDownIcon } from "@/components/icons";
-import type { BackgroundId } from "@/lib/backgrounds";
+import type { BackgroundId, GlassStyleId } from "@/lib/backgrounds";
 import {
   ACTIVE_CONVERSATION_TITLE,
   ACTIVE_MODEL_ID,
@@ -12,15 +12,19 @@ import {
 type ChatHeaderProps = {
   pickerOpen: boolean;
   activeBackground: BackgroundId;
+  activeGlass: GlassStyleId;
   onPickerOpenChange: (open: boolean) => void;
   onSelectBackground: (id: BackgroundId) => void;
+  onSelectGlass: (id: GlassStyleId) => void;
 };
 
 export function ChatHeader({
   pickerOpen,
   activeBackground,
+  activeGlass,
   onPickerOpenChange,
   onSelectBackground,
+  onSelectGlass,
 }: ChatHeaderProps) {
   return (
     <header className="relative z-20 flex w-full flex-wrap items-center justify-between gap-3">
@@ -64,9 +68,11 @@ export function ChatHeader({
         </div>
 
         <BackgroundPicker
+          activeGlass={activeGlass}
           activeId={activeBackground}
           onOpenChange={onPickerOpenChange}
           onSelect={onSelectBackground}
+          onSelectGlass={onSelectGlass}
           open={pickerOpen}
         />
       </div>

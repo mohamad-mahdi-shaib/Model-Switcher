@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" width="1440" height="900">
+  <defs>
+    <linearGradient id="aa-base" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1c0e0b"/>
+      <stop offset="36%" stop-color="#3c1c13"/>
+      <stop offset="70%" stop-color="#26110d"/>
+      <stop offset="100%" stop-color="#150a08"/>
+    </linearGradient>
+
+    <linearGradient id="aa-fold-a" x1="0" y1="0" x2="1" y2="0.35">
+      <stop offset="0%" stop-color="#c8792b" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#d98a34" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#c8792b" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="aa-fold-b" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0%" stop-color="#5c1f26" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#6e262e" stop-opacity="0.58"/>
+      <stop offset="100%" stop-color="#5c1f26" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="aa-fold-c" x1="0" y1="0" x2="1" y2="0.15">
+      <stop offset="0%" stop-color="#e8b27a" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#e8b27a" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#e8b27a" stop-opacity="0"/>
+    </linearGradient>
+
+    <radialGradient id="aa-amber" cx="0.81" cy="0.19" r="0.52">
+      <stop offset="0%" stop-color="#e09440" stop-opacity="0.5"/>
+      <stop offset="60%" stop-color="#c8792b" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#a8632a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aa-terracotta" cx="0.15" cy="0.79" r="0.55">
+      <stop offset="0%" stop-color="#a4502e" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#a4502e" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aa-burgundy" cx="0.5" cy="0.95" r="0.42">
+      <stop offset="0%" stop-color="#5c1f26" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#5c1f26" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="aa-calm" cx="0.5" cy="0.5" r="0.46">
+      <stop offset="0%" stop-color="#140907" stop-opacity="0.5"/>
+      <stop offset="70%" stop-color="#140907" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#140907" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="aa-silk" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.0031 0.0070" numOctaves="3" seed="51" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="170" xChannelSelector="R" yChannelSelector="G"/>
+      <feGaussianBlur stdDeviation="17"/>
+    </filter>
+
+    <filter id="aa-grain" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="19"/>
+      <feColorMatrix type="saturate" values="0"/>
+    </filter>
+  </defs>
+
+  <rect width="1440" height="900" fill="url(#aa-base)"/>
+
+  <g filter="url(#aa-silk)">
+    <rect x="-200" y="25" width="1840" height="225" fill="url(#aa-fold-a)" transform="rotate(-9 720 450)"/>
+    <rect x="-200" y="305" width="1840" height="195" fill="url(#aa-fold-b)" transform="rotate(-14 720 450)"/>
+    <rect x="-200" y="545" width="1840" height="245" fill="url(#aa-fold-a)" transform="rotate(-5 720 450)"/>
+    <rect x="-200" y="745" width="1840" height="150" fill="url(#aa-fold-c)" transform="rotate(-12 720 450)"/>
+    <rect x="-200" y="155" width="1840" height="110" fill="url(#aa-fold-c)" transform="rotate(4 720 450)"/>
+  </g>
+
+  <rect width="1440" height="900" fill="url(#aa-amber)"/>
+  <rect width="1440" height="900" fill="url(#aa-terracotta)"/>
+  <rect width="1440" height="900" fill="url(#aa-burgundy)"/>
+  <rect width="1440" height="900" fill="url(#aa-calm)"/>
+
+  <rect width="1440" height="900" filter="url(#aa-grain)" opacity="0.06" style="mix-blend-mode:overlay"/>
+</svg>

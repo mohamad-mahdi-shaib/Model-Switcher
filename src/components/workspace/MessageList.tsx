@@ -52,18 +52,26 @@ function AssistantAnswer({ message }: { message: AssistantMessage }) {
 
 export function MessageList() {
   return (
-    <div
-      aria-label="Conversation"
-      className="glass-scroll relative z-10 my-4 min-h-0 flex-1 space-y-6 overflow-y-auto pr-2"
-      role="log"
-    >
-      {MESSAGES.map((message) =>
-        message.role === "user" ? (
-          <UserBubble key={message.id} message={message} />
-        ) : (
-          <AssistantAnswer key={message.id} message={message} />
-        ),
-      )}
+    <div className="relative z-10 my-4 min-h-0 flex-1">
+      {/* Blurs the background behind the message column. The text sits above
+          it at full sharpness and full opacity. */}
+      <div
+        aria-hidden="true"
+        className="diffusion-scrim absolute -inset-x-2 -inset-y-1 rounded-[22px]"
+      />
+      <div
+        aria-label="Conversation"
+        className="glass-scroll relative h-full space-y-6 overflow-y-auto pr-2"
+        role="log"
+      >
+        {MESSAGES.map((message) =>
+          message.role === "user" ? (
+            <UserBubble key={message.id} message={message} />
+          ) : (
+            <AssistantAnswer key={message.id} message={message} />
+          ),
+        )}
+      </div>
     </div>
   );
 }
