@@ -1,4 +1,13 @@
-@import "tailwindcss";
+/* source() scopes class detection to src/. Without it Tailwind also scans
+   references/code.html and ships that prototype's classes in the bundle. */
+@import "tailwindcss" source("../");
+
+/* ---------------------------------------------------------------------------
+   Glass optics.
+   Ported from references/code.html. The gradients, blur radii, border widths
+   and layered box-shadows are the approved values and should not be retuned
+   casually -- see docs/design-decisions.md.
+--------------------------------------------------------------------------- */
 
 :root {
   --background: #ffffff;
@@ -14,15 +23,280 @@
     monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* --- Ambient background presets ------------------------------------------ */
+
+.workspace-root {
+  transition: background 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+  background-size: cover;
+  background-position: center;
+}
+
+.workspace-root[data-preset="warm"] {
+  background:
+    radial-gradient(ellipse at 88% 18%, rgba(255, 245, 235, 0.8) 0%, rgba(225, 210, 195, 0.45) 32%, transparent 70%),
+    radial-gradient(circle at 12% 40%, rgba(175, 155, 140, 0.55) 0%, transparent 55%),
+    radial-gradient(ellipse at 50% 88%, rgba(230, 218, 205, 0.65) 0%, transparent 65%),
+    radial-gradient(circle at 75% 70%, rgba(145, 128, 115, 0.45) 0%, transparent 50%),
+    linear-gradient(140deg, #6c6057 0%, #8c7f74 25%, #ad9f92 50%, #c4b5a7 75%, #887a6e 100%);
+}
+
+.workspace-root[data-preset="obsidian"] {
+  background:
+    radial-gradient(ellipse at 85% 20%, rgba(110, 130, 175, 0.4) 0%, transparent 50%),
+    radial-gradient(circle at 15% 75%, rgba(65, 80, 120, 0.35) 0%, transparent 55%),
+    radial-gradient(circle at 50% 40%, rgba(40, 48, 68, 0.6) 0%, transparent 70%),
+    linear-gradient(145deg, #0d1117 0%, #161b26 30%, #1e2433 60%, #10141d 100%);
+}
+
+.workspace-root[data-preset="marble"] {
+  background:
+    radial-gradient(ellipse at 85% 15%, rgba(255, 255, 255, 0.9) 0%, rgba(235, 240, 248, 0.6) 35%, transparent 70%),
+    radial-gradient(circle at 20% 60%, rgba(220, 228, 238, 0.7) 0%, transparent 50%),
+    radial-gradient(circle at 70% 80%, rgba(200, 210, 225, 0.5) 0%, transparent 55%),
+    linear-gradient(135deg, #cbd5e1 0%, #e2e8f0 30%, #f1f5f9 60%, #cbd5e1 100%);
+}
+
+.workspace-root[data-preset="emerald"] {
+  background:
+    radial-gradient(ellipse at 85% 20%, rgba(52, 211, 153, 0.3) 0%, transparent 50%),
+    radial-gradient(circle at 18% 70%, rgba(16, 185, 129, 0.25) 0%, transparent 55%),
+    radial-gradient(circle at 50% 30%, rgba(6, 78, 59, 0.55) 0%, transparent 65%),
+    linear-gradient(140deg, #062820 0%, #064e3b 35%, #047857 70%, #022c22 100%);
+}
+
+.workspace-root[data-preset="sunset"] {
+  background:
+    radial-gradient(ellipse at 80% 20%, rgba(253, 186, 116, 0.6) 0%, rgba(251, 146, 60, 0.35) 35%, transparent 65%),
+    radial-gradient(circle at 15% 75%, rgba(244, 63, 94, 0.4) 0%, transparent 55%),
+    radial-gradient(circle at 50% 50%, rgba(180, 83, 130, 0.45) 0%, transparent 60%),
+    linear-gradient(145deg, #4c1d3d 0%, #701a4f 30%, #9a3412 65%, #c2410c 100%);
+}
+
+/* --- Per-preset ink + popover fills ---------------------------------------
+   Light presets keep the reference's obsidian ink. Dark presets invert to a
+   light ink with a dark-side text shadow, otherwise #1a1c22 on a near-black
+   backdrop is unreadable.
+-------------------------------------------------------------------------- */
+
+.workspace-root[data-preset="warm"],
+.workspace-root[data-preset="marble"] {
+  --ink: #1a1c22;
+  --ink-muted: #383c46;
+  --ink-subtle: #555b68;
+  --ink-shadow: 0 1px 1px rgba(255, 255, 255, 0.5);
+  --ink-shadow-muted: 0 1px 1px rgba(255, 255, 255, 0.4);
+  --ink-shadow-subtle: 0 1px 1px rgba(255, 255, 255, 0.35);
+  --hairline: rgba(255, 255, 255, 0.25);
+  --row-hover: rgba(255, 255, 255, 0.16);
+  --row-active: rgba(255, 255, 255, 0.28);
+  --focus-ring: rgba(26, 28, 34, 0.75);
+  --focus-halo: rgba(255, 255, 255, 0.9);
+  --modal-fill: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.62) 0%,
+    rgba(255, 255, 255, 0.5) 60%,
+    rgba(255, 255, 255, 0.56) 100%
+  );
+  --modal-border: rgba(255, 255, 255, 0.95);
+}
+
+.workspace-root[data-preset="obsidian"],
+.workspace-root[data-preset="emerald"],
+.workspace-root[data-preset="sunset"] {
+  --ink: #f6f7fa;
+  --ink-muted: #dfe3ea;
+  --ink-subtle: #c2c8d4;
+  --ink-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  --ink-shadow-muted: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --ink-shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --hairline: rgba(255, 255, 255, 0.18);
+  --row-hover: rgba(255, 255, 255, 0.14);
+  --row-active: rgba(255, 255, 255, 0.22);
+  --focus-ring: rgba(255, 255, 255, 0.95);
+  --focus-halo: rgba(0, 0, 0, 0.55);
+  --modal-fill: linear-gradient(
+    135deg,
+    rgba(18, 20, 26, 0.72) 0%,
+    rgba(18, 20, 26, 0.62) 60%,
+    rgba(18, 20, 26, 0.68) 100%
+  );
+  --modal-border: rgba(255, 255, 255, 0.5);
+}
+
+/* --- Ink helpers --------------------------------------------------------- */
+
+.glass-text-dark {
+  color: var(--ink);
+  text-shadow: var(--ink-shadow);
+}
+.glass-text-muted {
+  color: var(--ink-muted);
+  text-shadow: var(--ink-shadow-muted);
+}
+.glass-text-subtle {
+  color: var(--ink-subtle);
+  text-shadow: var(--ink-shadow-subtle);
+}
+.glass-hairline {
+  border-color: var(--hairline);
+}
+
+/* --- Surfaces ------------------------------------------------------------ */
+
+.optical-glass {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(255, 255, 255, 0.03) 40%,
+    rgba(255, 255, 255, 0.06) 70%,
+    rgba(255, 255, 255, 0.11) 100%
+  );
+  backdrop-filter: blur(16px) saturate(135%);
+  -webkit-backdrop-filter: blur(16px) saturate(135%);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  box-shadow:
+    0 24px 60px -8px rgba(15, 10, 8, 0.28),
+    0 10px 24px -6px rgba(0, 0, 0, 0.16),
+    0 0 25px rgba(255, 255, 255, 0.38),
+    inset 0 2px 3px rgba(255, 255, 255, 0.95),
+    inset 0 -1.5px 2.5px rgba(0, 0, 0, 0.2),
+    inset 0 0 16px rgba(255, 255, 255, 0.32);
+  position: relative;
+}
+
+.glass-btn {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  box-shadow:
+    0 4px 12px -2px rgba(25, 18, 12, 0.12),
+    inset 0 1.5px 1.5px rgba(255, 255, 255, 0.9),
+    inset 0 -1px 1.5px rgba(0, 0, 0, 0.12);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.glass-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 6px 16px -2px rgba(25, 18, 12, 0.18),
+    inset 0 1.5px 2px rgba(255, 255, 255, 1),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.1);
+}
+.glass-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.glass-input-capsule {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow:
+    0 8px 24px -4px rgba(35, 24, 15, 0.14),
+    inset 0 2px 3px rgba(0, 0, 0, 0.12),
+    inset 0 1px 2px rgba(255, 255, 255, 0.85);
+}
+
+/* Popover glass. Blur is raised from the reference's 24px to 44px and the fill
+   is far less transparent: in the reference screenshot the chat text bled
+   straight through the picker and left both layers unreadable. */
+.glass-modal {
+  background: var(--modal-fill);
+  backdrop-filter: blur(44px) saturate(150%);
+  -webkit-backdrop-filter: blur(44px) saturate(150%);
+  border: 1.5px solid var(--modal-border);
+  box-shadow:
+    0 20px 50px -10px rgba(0, 0, 0, 0.35),
+    0 0 30px rgba(255, 255, 255, 0.45),
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.95),
+    inset 0 -1.5px 2px rgba(0, 0, 0, 0.15);
+}
+
+/* --- Rows and preset cards ----------------------------------------------- */
+
+.glass-row {
+  transition: background-color 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.glass-row:hover {
+  background: var(--row-hover);
+}
+.glass-row[aria-current="true"] {
+  background: var(--row-active);
+}
+
+.bg-card {
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.bg-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.6);
+  background: var(--row-hover);
+  box-shadow:
+    0 8px 20px -4px rgba(0, 0, 0, 0.25),
+    0 0 12px rgba(255, 255, 255, 0.4);
+}
+.bg-card[aria-checked="true"] {
+  border-color: #ffffff;
+  background: var(--row-active);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.95),
+    0 8px 20px rgba(0, 0, 0, 0.3);
+}
+
+/* --- Focus --------------------------------------------------------------- */
+
+.focus-glass {
+  outline: none;
+}
+.focus-glass:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--focus-halo);
+}
+
+/* --- Scroll area --------------------------------------------------------- */
+
+.glass-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.45) transparent;
+  overscroll-behavior: contain;
+}
+.glass-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.glass-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.glass-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.glass-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.6);
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-root,
+  .glass-btn,
+  .bg-card,
+  .glass-row {
+    transition: none;
+  }
+  .bg-card:hover {
+    transform: none;
+  }
 }
