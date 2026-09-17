@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Futuristic Glass AI Workspace</title>
+<!-- Tailwind CSS v3 -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Google Fonts: Inter for ultra-crisp typography -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Lucide Icons -->
+<script src="https://unpkg.com/lucide@latest"></script>
+<!-- BEGIN: Custom Glass & Flare Styles -->
+<style data-purpose="glass-optics">
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      transition: background 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* Ambient Background Presets */
+    .bg-theme-warm {
+      background: 
+        radial-gradient(ellipse at 88% 18%, rgba(255, 245, 235, 0.8) 0%, rgba(225, 210, 195, 0.45) 32%, transparent 70%),
+        radial-gradient(circle at 12% 40%, rgba(175, 155, 140, 0.55) 0%, transparent 55%),
+        radial-gradient(ellipse at 50% 88%, rgba(230, 218, 205, 0.65) 0%, transparent 65%),
+        radial-gradient(circle at 75% 70%, rgba(145, 128, 115, 0.45) 0%, transparent 50%),
+        linear-gradient(140deg, #6c6057 0%, #8c7f74 25%, #ad9f92 50%, #c4b5a7 75%, #887a6e 100%);
+      background-size: cover;
+      background-position: center;
+    }
+
+    .bg-theme-obsidian {
+      background: 
+        radial-gradient(ellipse at 85% 20%, rgba(110, 130, 175, 0.4) 0%, transparent 50%),
+        radial-gradient(circle at 15% 75%, rgba(65, 80, 120, 0.35) 0%, transparent 55%),
+        radial-gradient(circle at 50% 40%, rgba(40, 48, 68, 0.6) 0%, transparent 70%),
+        linear-gradient(145deg, #0d1117 0%, #161b26 30%, #1e2433 60%, #10141d 100%);
+      background-size: cover;
+      background-position: center;
+    }
+
+    .bg-theme-marble {
+      background: 
+        radial-gradient(ellipse at 85% 15%, rgba(255, 255, 255, 0.9) 0%, rgba(235, 240, 248, 0.6) 35%, transparent 70%),
+        radial-gradient(circle at 20% 60%, rgba(220, 228, 238, 0.7) 0%, transparent 50%),
+        radial-gradient(circle at 70% 80%, rgba(200, 210, 225, 0.5) 0%, transparent 55%),
+        linear-gradient(135deg, #cbd5e1 0%, #e2e8f0 30%, #f1f5f9 60%, #cbd5e1 100%);
+      background-size: cover;
+      background-position: center;
+    }
+
+    .bg-theme-emerald {
+      background: 
+        radial-gradient(ellipse at 85% 20%, rgba(52, 211, 153, 0.3) 0%, transparent 50%),
+        radial-gradient(circle at 18% 70%, rgba(16, 185, 129, 0.25) 0%, transparent 55%),
+        radial-gradient(circle at 50% 30%, rgba(6, 78, 59, 0.55) 0%, transparent 65%),
+        linear-gradient(140deg, #062820 0%, #064e3b 35%, #047857 70%, #022c22 100%);
+      background-size: cover;
+      background-position: center;
+    }
+
+    .bg-theme-sunset {
+      background: 
+        radial-gradient(ellipse at 80% 20%, rgba(253, 186, 116, 0.6) 0%, rgba(251, 146, 60, 0.35) 35%, transparent 65%),
+        radial-gradient(circle at 15% 75%, rgba(244, 63, 94, 0.4) 0%, transparent 55%),
+        radial-gradient(circle at 50% 50%, rgba(180, 83, 130, 0.45) 0%, transparent 60%),
+        linear-gradient(145deg, #4c1d3d 0%, #701a4f 30%, #9a3412 65%, #c2410c 100%);
+      background-size: cover;
+      background-position: center;
+    }
+
+    /* 100% Ultra-Clear Transparent Optical Glass with Crisp Specular Edges */
+    .optical-glass {
+      background: linear-gradient(
+        135deg,
+        rgba(255, 255, 255, 0.14) 0%,
+        rgba(255, 255, 255, 0.03) 40%,
+        rgba(255, 255, 255, 0.06) 70%,
+        rgba(255, 255, 255, 0.11) 100%
+      );
+      backdrop-filter: blur(16px) saturate(135%);
+      -webkit-backdrop-filter: blur(16px) saturate(135%);
+      border: 1.5px solid rgba(255, 255, 255, 0.85);
+      box-shadow:
+        0 24px 60px -8px rgba(15, 10, 8, 0.28),
+        0 10px 24px -6px rgba(0, 0, 0, 0.16),
+        0 0 25px rgba(255, 255, 255, 0.38),
+        inset 0 2px 3px rgba(255, 255, 255, 0.95),
+        inset 0 -1.5px 2.5px rgba(0, 0, 0, 0.2),
+        inset 0 0 16px rgba(255, 255, 255, 0.32);
+      position: relative;
+    }
+
+    /* Physical Ultra-Clear Sculpted Liquid Glass Capsule Buttons */
+    .glass-btn {
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(10px) saturate(140%);
+      -webkit-backdrop-filter: blur(10px) saturate(140%);
+      box-shadow: 
+        0 4px 12px -2px rgba(25, 18, 12, 0.12),
+        inset 0 1.5px 1.5px rgba(255, 255, 255, 0.9),
+        inset 0 -1px 1.5px rgba(0, 0, 0, 0.12);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .glass-btn:hover {
+      background: rgba(255, 255, 255, 0.22);
+      border-color: rgba(255, 255, 255, 0.95);
+      box-shadow: 
+        0 6px 16px -2px rgba(25, 18, 12, 0.18),
+        inset 0 1.5px 2px rgba(255, 255, 255, 1),
+        inset 0 -1px 2px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Ultra-clear pill badge for sidebar items */
+    .badge-pill {
+      background: rgba(255, 255, 255, 0.15);
+      border: 0.5px solid rgba(255, 255, 255, 0.65);
+      backdrop-filter: blur(6px);
+      box-shadow: inset 0 1px 1.5px rgba(255, 255, 255, 0.8);
+    }
+
+    /* Ultra-Clear Carved Glass Trough Composer Capsule */
+    .glass-input-capsule {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.68);
+      backdrop-filter: blur(12px) saturate(140%);
+      -webkit-backdrop-filter: blur(12px) saturate(140%);
+      box-shadow: 
+        0 8px 24px -4px rgba(35, 24, 15, 0.14),
+        inset 0 2px 3px rgba(0, 0, 0, 0.12),
+        inset 0 1px 2px rgba(255, 255, 255, 0.85);
+    }
+
+    /* Floating Popover Glass */
+    .glass-modal {
+      background: linear-gradient(
+        135deg,
+        rgba(255, 255, 255, 0.28) 0%,
+        rgba(255, 255, 255, 0.12) 60%,
+        rgba(255, 255, 255, 0.18) 100%
+      );
+      backdrop-filter: blur(24px) saturate(150%);
+      -webkit-backdrop-filter: blur(24px) saturate(150%);
+      border: 1.5px solid rgba(255, 255, 255, 0.95);
+      box-shadow:
+        0 20px 50px -10px rgba(0, 0, 0, 0.35),
+        0 0 30px rgba(255, 255, 255, 0.45),
+        inset 0 1.5px 2px rgba(255, 255, 255, 0.95),
+        inset 0 -1.5px 2px rgba(0, 0, 0, 0.15);
+    }
+
+    /* Thumbnail selection card */
+    .bg-card {
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .bg-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px -4px rgba(0,0,0,0.25), 0 0 12px rgba(255,255,255,0.4);
+    }
+    .bg-card.active {
+      border-color: #ffffff;
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 8px 20px rgba(0,0,0,0.3);
+    }
+
+    /* Crisp Specular Obsidian Typography */
+    .glass-text-dark {
+      color: #1a1c22;
+      text-shadow: 0 1px 1px rgba(255, 255, 255, 0.5);
+    }
+    .glass-text-muted {
+      color: #383c46;
+      text-shadow: 0 1px 1px rgba(255, 255, 255, 0.4);
+    }
+    .glass-text-subtle {
+      color: #555b68;
+      text-shadow: 0 1px 1px rgba(255, 255, 255, 0.35);
+    }
+  </style>
+<!-- END: Custom Glass & Flare Styles -->
+</head>
+<body class="w-screen h-screen bg-theme-warm relative flex items-center justify-center select-none overflow-hidden" id="body-backdrop">
+<!-- BEGIN: Dynamic Ambient Lighting Shapes -->
+<div class="absolute inset-0 pointer-events-none overflow-hidden transition-opacity duration-700" data-purpose="ambient-lighting-effects" id="ambient-lights">
+<div class="absolute top-[5%] right-[10%] w-[580px] h-[580px] rounded-full bg-[#faedd8]/45 blur-[100px]"></div>
+<div class="absolute -bottom-[12%] left-[22%] w-[880px] h-[480px] rounded-full bg-[#ebdcd0]/50 blur-[110px]"></div>
+<div class="absolute top-[22%] left-[6%] w-[480px] h-[680px] rounded-full bg-[#52443a]/35 blur-[120px]"></div>
+<div class="absolute bottom-[22%] right-[18%] w-[420px] h-[420px] rounded-full bg-[#f4e7d8]/40 blur-[90px]"></div>
+</div>
+<!-- END: Dynamic Ambient Lighting Shapes -->
+<!-- BEGIN: Interface Layout Container -->
+<main class="relative z-10 w-full max-w-[1360px] h-[720px] px-8 flex items-center justify-center gap-5" data-purpose="workspace-root">
+<!-- BEGIN: Left Sidebar Panel -->
+<aside class="optical-glass w-[238px] h-[645px] rounded-[30px] p-5 flex flex-col justify-between shrink-0 glass-text-dark" data-purpose="sidebar-panel">
+<!-- Top Section -->
+<div class="space-y-4">
+<!-- AI Workspace Header -->
+<div class="flex items-center gap-2.5 px-0.5 pt-0.5"><div class="w-7 h-7 rounded-full bg-white/25 border border-white/80 flex items-center justify-center shadow-sm overflow-hidden backdrop-blur-md relative"><div class="absolute inset-0 bg-gradient-to-tr from-white/40 to-transparent pointer-events-none"></div><svg aria-hidden="true" class="lucide lucide-sparkles w-3.5 h-3.5 text-[#1a1c22] relative z-10" data-lucide="sparkles" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"></path><circle cx="19" cy="6" r="1.5"></circle></svg></div><span class="text-[13px] font-semibold tracking-wide glass-text-dark uppercase">AI Workspace</span></div>
+<!-- Add Workspace Button -->
+<button class="glass-btn w-full h-[34px] rounded-xl flex items-center justify-center gap-1.5 text-[12px] font-medium glass-text-dark tracking-tight active:scale-[0.98]" type="button">
+<svg aria-hidden="true" class="lucide lucide-plus w-3.5 h-3.5 stroke-[2.4] text-[#1a1c22]" data-lucide="plus" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+<span class="glass-text-dark font-medium">Add Workspace</span>
+</button>
+<!-- Navigation Sections Container -->
+<div class="space-y-3.5 pt-1 text-[11px]">
+<!-- Group 1: Index -->
+<div>
+<div class="text-[10px] font-semibold text-[#555b68] px-1 mb-1.5 tracking-wider uppercase drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]">Index</div>
+<ul class="space-y-1">
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer group transition-colors">
+<span class="glass-text-dark font-medium">Project Idea</span>
+<span class="badge-pill px-2 py-0.5 rounded-full text-[9px] glass-text-dark font-semibold tracking-tight">200lm</span>
+</li>
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">Falson/Itication</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">1900n</span>
+</li>
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">Remarkdulating</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">500m</span>
+</li>
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">Preconsibility</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">2900n</span>
+</li>
+</ul>
+</div>
+<!-- Group 2: Modes -->
+<div>
+<div class="text-[10px] font-semibold text-[#555b68] px-1 mb-1.5 tracking-wider uppercase drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]">Modes</div>
+<ul class="space-y-1">
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">Modalsing</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">200m</span>
+</li>
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">Poeterator</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">107s</span>
+</li>
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">IShort key</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">2000s</span>
+</li>
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">Preccontsrsistery</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">1500n</span>
+</li>
+</ul>
+</div>
+<!-- Group 3: Conversaties -->
+<div>
+<div class="text-[10px] font-semibold text-[#555b68] px-1 mb-1.5 tracking-wider uppercase drop-shadow-[0_1px_1px_rgba(255,255,255,0.4)]">Conversaties</div>
+<ul class="space-y-1">
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">Descloed hestors</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">2a</span>
+</li>
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">Predenbitiss</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">11s</span>
+</li>
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">Conccorsrivrators</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">10s</span>
+</li>
+<li class="flex items-center justify-between px-1.5 py-0.5 rounded-lg hover:bg-white/10 cursor-pointer transition-colors">
+<span class="glass-text-muted font-normal">Light misters</span>
+<span class="text-[9.5px] glass-text-subtle font-medium">13p</span>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<!-- Bottom Settings Links -->
+<div class="pt-2 border-t border-white/20 space-y-1 text-[11px] glass-text-muted">
+<a class="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-white/10 transition-colors" href="#settings">
+<svg aria-hidden="true" class="lucide lucide-settings w-3.5 h-3.5 opacity-85 text-[#1a1c22]" data-lucide="settings" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></svg>
+<span class="glass-text-dark font-medium">Setting</span>
+</a>
+<a class="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-white/10 transition-colors" href="#profiles">
+<svg aria-hidden="true" class="lucide lucide-layers w-3.5 h-3.5 opacity-85 text-[#1a1c22]" data-lucide="layers" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"></path><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"></path><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"></path></svg>
+<span class="glass-text-dark font-medium">All profiles</span>
+</a>
+</div>
+</aside>
+<!-- END: Left Sidebar Panel -->
+<!-- BEGIN: Main Conversation Panel -->
+<section class="optical-glass w-[850px] h-[645px] rounded-[32px] p-8 flex flex-col justify-between relative overflow-hidden" data-purpose="main-chat-panel">
+<!-- Main Panel Top Header Bar -->
+<header class="flex items-center justify-between relative z-20 w-full">
+<!-- Project Title Dropdown -->
+<button class="flex items-center gap-1.5 font-semibold text-[17px] tracking-tight hover:opacity-85 glass-text-dark">
+<span>Project ideas</span>
+<svg aria-hidden="true" class="lucide lucide-chevron-down w-4 h-4 stroke-[2.4] mt-0.5 text-[#1a1c22]" data-lucide="chevron-down" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="m6 9 6 6 6-6"></path></svg>
+</button>
+<!-- Right Action Pill Group -->
+<div class="flex items-center gap-2 relative">
+<!-- Change Background Trigger Button -->
+<button class="glass-btn h-[30px] px-3.5 rounded-full flex items-center gap-1.5 text-[11.5px] font-medium glass-text-dark active:scale-95 shadow-sm border border-white/80" id="btn-toggle-bg-picker" type="button">
+<svg aria-hidden="true" class="lucide lucide-image w-3 h-3 text-[#1a1c22]" data-lucide="image" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><rect height="18" rx="2" ry="2" width="18" x="3" y="3"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path></svg>
+<span>Change background</span>
+</button>
+<button class="glass-btn h-[30px] px-3.5 rounded-full flex items-center gap-1.5 text-[11.5px] font-medium glass-text-dark active:scale-95">
+<svg aria-hidden="true" class="lucide lucide-layout-grid w-3 h-3 text-[#1a1c22]" data-lucide="layout-grid" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><rect height="7" rx="1" width="7" x="3" y="3"></rect><rect height="7" rx="1" width="7" x="14" y="3"></rect><rect height="7" rx="1" width="7" x="14" y="14"></rect><rect height="7" rx="1" width="7" x="3" y="14"></rect></svg>
+<span>Slove</span>
+</button>
+<button class="glass-btn h-[30px] px-3.5 rounded-full flex items-center gap-1.5 text-[11.5px] font-medium glass-text-dark active:scale-95">
+<svg aria-hidden="true" class="lucide lucide-share-2 w-3 h-3 text-[#1a1c22]" data-lucide="share-2" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"></line><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"></line></svg>
+<span>Share</span>
+</button>
+<button class="glass-btn h-[30px] px-3.5 rounded-full flex items-center gap-1.5 text-[11.5px] font-medium glass-text-dark active:scale-95">
+<svg aria-hidden="true" class="lucide lucide-panel-top-close w-3 h-3 text-[#1a1c22]" data-lucide="panel-top-close" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><rect height="18" rx="2" width="18" x="3" y="3"></rect><path d="M3 9h18"></path><path d="m9 16 3-3 3 3"></path></svg>
+<span>First</span>
+</button>
+<button class="glass-btn w-[30px] h-[30px] rounded-full flex items-center justify-center text-[#1a1c22] active:scale-95">
+<svg aria-hidden="true" class="lucide lucide-more-horizontal w-3.5 h-3.5" data-lucide="more-horizontal" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle><circle cx="5" cy="12" r="1"></circle></svg>
+</button>
+<!-- BEGIN: Floating Glass Background Picker Popover -->
+<div class="glass-modal absolute right-0 top-[42px] w-[340px] rounded-2xl p-4 shadow-2xl z-50 transition-all duration-300 transform origin-top-right flex flex-col gap-3" id="bg-picker-modal">
+<!-- Header -->
+<div class="flex items-center justify-between pb-2 border-b border-white/30">
+<div class="flex items-center gap-1.5">
+<svg class="lucide lucide-palette w-3.5 h-3.5 text-[#1a1c22]" data-lucide="palette" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><circle cx="13.5" cy="6.5" fill="currentColor" r=".5"></circle><circle cx="17.5" cy="10.5" fill="currentColor" r=".5"></circle><circle cx="8.5" cy="7.5" fill="currentColor" r=".5"></circle><circle cx="6.5" cy="12.5" fill="currentColor" r=".5"></circle><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path></svg>
+<span class="text-[12.5px] font-semibold tracking-tight glass-text-dark">Ambient Backdrops</span>
+</div>
+<button class="w-5 h-5 rounded-full flex items-center justify-center text-[#282c35] hover:bg-white/20 transition-colors" id="btn-close-bg-picker" type="button">
+<svg class="lucide lucide-x w-3.5 h-3.5" data-lucide="x" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+</button>
+</div>
+<!-- Backdrop Choice List -->
+<div class="flex flex-col gap-1.5" id="preset-list">
+<!-- Preset 1 -->
+<button class="bg-card active w-full p-1.5 rounded-xl border border-white/60 bg-white/10 flex items-center justify-between text-left cursor-pointer group" data-preset="warm" type="button">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-lg border border-white/70 shadow-sm shrink-0" style="background: linear-gradient(135deg, #ad9f92, #7d7065);"></div>
+<div>
+<div class="text-[11.5px] font-semibold glass-text-dark leading-tight">Warm Studio</div>
+<div class="text-[9.5px] glass-text-subtle">Taupe architectural light</div>
+</div>
+</div>
+<div class="check-icon w-4 h-4 rounded-full bg-white/80 flex items-center justify-center text-[#1a1c22] shadow-sm">
+<svg class="lucide lucide-check w-2.5 h-2.5" data-lucide="check" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M20 6 9 17l-5-5"></path></svg>
+</div>
+</button>
+<!-- Preset 2 -->
+<button class="bg-card w-full p-1.5 rounded-xl border border-white/30 hover:border-white/60 hover:bg-white/10 flex items-center justify-between text-left cursor-pointer group" data-preset="obsidian" type="button">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-lg border border-white/40 shadow-sm shrink-0" style="background: linear-gradient(135deg, #1e2433, #0d1117);"></div>
+<div>
+<div class="text-[11.5px] font-semibold glass-text-dark leading-tight">Smoky Obsidian</div>
+<div class="text-[9.5px] glass-text-subtle">Dark luxury moody glow</div>
+</div>
+</div>
+<div class="check-icon hidden w-4 h-4 rounded-full bg-white/80 items-center justify-center text-[#1a1c22] shadow-sm">
+<svg class="lucide lucide-check w-2.5 h-2.5" data-lucide="check" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M20 6 9 17l-5-5"></path></svg>
+</div>
+</button>
+<!-- Preset 3 -->
+<button class="bg-card w-full p-1.5 rounded-xl border border-white/30 hover:border-white/60 hover:bg-white/10 flex items-center justify-between text-left cursor-pointer group" data-preset="marble" type="button">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-lg border border-white/80 shadow-sm shrink-0" style="background: linear-gradient(135deg, #f1f5f9, #cbd5e1);"></div>
+<div>
+<div class="text-[11.5px] font-semibold glass-text-dark leading-tight">Pearl White Marble</div>
+<div class="text-[9.5px] glass-text-subtle">Bright veined minimal silver</div>
+</div>
+</div>
+<div class="check-icon hidden w-4 h-4 rounded-full bg-white/80 items-center justify-center text-[#1a1c22] shadow-sm">
+<svg class="lucide lucide-check w-2.5 h-2.5" data-lucide="check" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M20 6 9 17l-5-5"></path></svg>
+</div>
+</button>
+<!-- Preset 4 -->
+<button class="bg-card w-full p-1.5 rounded-xl border border-white/30 hover:border-white/60 hover:bg-white/10 flex items-center justify-between text-left cursor-pointer group" data-preset="emerald" type="button">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-lg border border-white/40 shadow-sm shrink-0" style="background: linear-gradient(135deg, #047857, #062820);"></div>
+<div>
+<div class="text-[11.5px] font-semibold glass-text-dark leading-tight">Emerald Velvet</div>
+<div class="text-[9.5px] glass-text-subtle">Rich jewel forest ambiance</div>
+</div>
+</div>
+<div class="check-icon hidden w-4 h-4 rounded-full bg-white/80 items-center justify-center text-[#1a1c22] shadow-sm">
+<svg class="lucide lucide-check w-2.5 h-2.5" data-lucide="check" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M20 6 9 17l-5-5"></path></svg>
+</div>
+</button>
+<!-- Preset 5 -->
+<button class="bg-card w-full p-1.5 rounded-xl border border-white/30 hover:border-white/60 hover:bg-white/10 flex items-center justify-between text-left cursor-pointer group" data-preset="sunset" type="button">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-lg border border-white/50 shadow-sm shrink-0" style="background: linear-gradient(135deg, #fb923c, #701a4f);"></div>
+<div>
+<div class="text-[11.5px] font-semibold glass-text-dark leading-tight">Sunset Horizon</div>
+<div class="text-[9.5px] glass-text-subtle">Warm rose gold luminance</div>
+</div>
+</div>
+<div class="check-icon hidden w-4 h-4 rounded-full bg-white/80 items-center justify-center text-[#1a1c22] shadow-sm">
+<svg class="lucide lucide-check w-2.5 h-2.5" data-lucide="check" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M20 6 9 17l-5-5"></path></svg>
+</div>
+</button>
+</div>
+</div>
+<!-- END: Floating Glass Background Picker Popover -->
+</div>
+</header>
+<!-- Chat & Tasks Conversation Scroll Area -->
+<div class="flex-1 my-4 space-y-6 overflow-y-auto pr-2 relative z-10" data-purpose="chat-messages-container">
+<!-- User Query Bubble (Right-aligned) -->
+<div class="flex justify-end pt-2">
+<div class="glass-btn px-5 py-2.5 rounded-[22px] max-w-md text-[13px] font-medium glass-text-dark shadow-sm border border-white/80 bg-white/20 tracking-tight leading-snug flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-white/90 shadow-sm shrink-0"></span><span>Acr.aevvoelized Storybook Generator</span></div>
+</div>
+<!-- AI Response Section -->
+<div class="flex items-start gap-3.5 pt-1">
+<!-- AI Glyph Avatar -->
+<div class="w-7 h-7 rounded-full bg-white/15 border border-white/70 flex items-center justify-center shrink-0 mt-0.5 shadow-sm backdrop-blur-md">
+<svg aria-hidden="true" class="lucide lucide-bot w-3.5 h-3.5 text-[#1a1c22]" data-lucide="bot" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8V4H8"></path><rect height="12" rx="2" width="16" x="4" y="8"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>
+</div>
+<!-- Structured Tasks Content -->
+<div class="space-y-3.5 leading-relaxed text-[12.5px] max-w-[680px]">
+<!-- Header -->
+<div>
+<h3 class="font-semibold glass-text-dark text-[14px] tracking-tight">Tasks</h3>
+<p class="glass-text-muted mt-1">
+                Tiart a great film, xoa project toon tappopon organizization on cowvecing:
+              </p>
+</div>
+<!-- Numbered Task List -->
+<ol class="space-y-3 pl-1">
+<!-- Item 1 -->
+<li class="flex items-start gap-1.5">
+<span class="font-bold glass-text-dark shrink-0">1.</span>
+<div>
+<span class="font-semibold glass-text-dark">Personlized Storybook Inseome</span>
+<p class="glass-text-subtle text-[12px] mt-0.5 leading-normal">
+                    Create a tyes of projean reskemos beeen mere contbing geoconational rarry, creater a real ocad, Afis of generastion and images.
+                  </p>
+</div>
+</li>
+<!-- Item 2 -->
+<li class="flex items-start gap-1.5">
+<span class="font-bold glass-text-dark shrink-0">2.</span>
+<div>
+<span class="font-semibold glass-text-dark">Steed Any Caption</span>
+<p class="glass-text-subtle text-[12px] mt-0.5 leading-normal">
+                    Betide a prevkam orrrast Recatisacone errccs exropocrorions with your highest datas ailli sesicios specic seits and onzsets.
+                  </p>
+</div>
+</li>
+<!-- Item 3 -->
+<li class="flex items-start gap-1.5">
+<span class="font-bold glass-text-dark shrink-0">3.</span>
+<div>
+<span class="font-semibold glass-text-dark">All Projecct Matens (Joney)</span>
+<p class="glass-text-subtle text-[12px] mt-0.5 leading-normal">
+                    Make a roooting apecity dscerrenctinensss from toqosthahed wers inspecoes and geerxpsiing vopsiciny managements.
+                  </p>
+</div>
+</li>
+</ol>
+<!-- Conclusion prompt -->
+<p class="glass-text-muted pt-1 text-[12px]">
+              Whak of Heve have Inseets haoa etlo onmeatingp.hends you twe clorsed this feel?
+            </p>
+</div>
+</div>
+</div>
+<!-- Bottom Input Composer Bar -->
+<footer class="relative z-10 pt-1" data-purpose="composer-area">
+<div class="glass-input-capsule h-[48px] rounded-full px-4 flex items-center justify-between gap-3">
+<!-- Attachment Button & Input Field -->
+<div class="flex items-center gap-3 flex-1">
+<button class="text-[#32363f] hover:text-[#1a1c22] transition-colors" type="button">
+<svg aria-hidden="true" class="lucide lucide-paperclip w-4 h-4 stroke-[2]" data-lucide="paperclip" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"></path></svg>
+</button>
+<input class="w-full bg-transparent border-0 p-0 text-[13px] glass-text-dark placeholder-[#555b68] focus:ring-0 focus:outline-none" placeholder="All message" type="text"/>
+</div>
+<!-- Submit / AI Command Pill Button -->
+<button class="w-7 h-7 rounded-full bg-gradient-to-tr from-white/35 to-white/70 hover:from-white/50 hover:to-white/90 border border-white/90 flex items-center justify-center text-[#1a1c22] transition-all active:scale-95 shadow-sm backdrop-blur-md cursor-pointer group" type="button"><svg aria-hidden="true" class="lucide lucide-sparkles w-3.5 h-3.5 stroke-[2.2] transition-transform group-hover:scale-110" data-lucide="sparkles" fill="none" height="24" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewbox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"></path><circle cx="19" cy="6" r="1.5"></circle></svg></button>
+</div>
+</footer>
+</section>
+<!-- END: Main Conversation Panel -->
+</main>
+<!-- END: Interface Layout Container -->
+<!-- BEGIN: Interactive Background Switcher JavaScript -->
+<script data-purpose="bg-switcher-logic">
+  document.addEventListener('DOMContentLoaded', () => {
+    const bodyEl = document.getElementById('body-backdrop');
+    const modal = document.getElementById('bg-picker-modal');
+    const toggleBtn = document.getElementById('btn-toggle-bg-picker');
+    const closeBtn = document.getElementById('btn-close-bg-picker');
+    const ambientLights = document.getElementById('ambient-lights');
+    const presetButtons = document.querySelectorAll('#preset-list .bg-card');
+
+    // Toggle popover modal
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      modal.classList.toggle('hidden');
+    });
+
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      modal.classList.add('hidden');
+    });
+
+    // Close when clicking outside modal
+    document.addEventListener('click', (e) => {
+      if (!modal.contains(e.target) && !toggleBtn.contains(e.target)) {
+        modal.classList.add('hidden');
+      }
+    });
+
+    // Switch Background Presets
+    presetButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const preset = btn.getAttribute('data-preset');
+
+        // Update active checkmarks & card styling
+        presetButtons.forEach(b => {
+          b.classList.remove('active', 'border-white/60', 'bg-white/10');
+          b.classList.add('border-white/30');
+          const check = b.querySelector('.check-icon');
+          if (check) {
+            check.classList.add('hidden');
+            check.classList.remove('flex');
+          }
+        });
+
+        btn.classList.add('active', 'border-white/60', 'bg-white/10');
+        btn.classList.remove('border-white/30');
+        const activeCheck = btn.querySelector('.check-icon');
+        if (activeCheck) {
+          activeCheck.classList.remove('hidden');
+          activeCheck.classList.add('flex');
+        }
+
+        // Apply corresponding class to body
+        bodyEl.classList.remove('bg-theme-warm', 'bg-theme-obsidian', 'bg-theme-marble', 'bg-theme-emerald', 'bg-theme-sunset');
+        bodyEl.classList.add(`bg-theme-${preset}`);
+
+        // Tune dynamic ambient glow overlays based on preset
+        if (preset === 'obsidian') {
+          ambientLights.innerHTML = `
+            <div class="absolute top-[5%] right-[10%] w-[600px] h-[600px] rounded-full bg-[#3b82f6]/20 blur-[130px]"></div>
+            <div class="absolute -bottom-[12%] left-[22%] w-[880px] h-[480px] rounded-full bg-[#1e293b]/40 blur-[120px]"></div>
+            <div class="absolute top-[22%] left-[6%] w-[480px] h-[680px] rounded-full bg-[#0f172a]/50 blur-[110px]"></div>
+          `;
+        } else if (preset === 'marble') {
+          ambientLights.innerHTML = `
+            <div class="absolute top-[5%] right-[10%] w-[580px] h-[580px] rounded-full bg-white/60 blur-[100px]"></div>
+            <div class="absolute -bottom-[12%] left-[22%] w-[880px] h-[480px] rounded-full bg-[#e2e8f0]/60 blur-[110px]"></div>
+            <div class="absolute top-[22%] left-[6%] w-[480px] h-[680px] rounded-full bg-[#94a3b8]/30 blur-[120px]"></div>
+          `;
+        } else if (preset === 'emerald') {
+          ambientLights.innerHTML = `
+            <div class="absolute top-[5%] right-[10%] w-[580px] h-[580px] rounded-full bg-[#10b981]/25 blur-[110px]"></div>
+            <div class="absolute -bottom-[12%] left-[22%] w-[880px] h-[480px] rounded-full bg-[#047857]/30 blur-[120px]"></div>
+            <div class="absolute top-[22%] left-[6%] w-[480px] h-[680px] rounded-full bg-[#022c22]/50 blur-[110px]"></div>
+          `;
+        } else if (preset === 'sunset') {
+          ambientLights.innerHTML = `
+            <div class="absolute top-[5%] right-[10%] w-[580px] h-[580px] rounded-full bg-[#fb923c]/40 blur-[100px]"></div>
+            <div class="absolute -bottom-[12%] left-[22%] w-[880px] h-[480px] rounded-full bg-[#f43f5e]/35 blur-[120px]"></div>
+            <div class="absolute top-[22%] left-[6%] w-[480px] h-[680px] rounded-full bg-[#701a4f]/40 blur-[110px]"></div>
+          `;
+        } else {
+          ambientLights.innerHTML = `
+            <div class="absolute top-[5%] right-[10%] w-[580px] h-[580px] rounded-full bg-[#faedd8]/45 blur-[100px]"></div>
+            <div class="absolute -bottom-[12%] left-[22%] w-[880px] h-[480px] rounded-full bg-[#ebdcd0]/50 blur-[110px]"></div>
+            <div class="absolute top-[22%] left-[6%] w-[480px] h-[680px] rounded-full bg-[#52443a]/35 blur-[120px]"></div>
+            <div class="absolute bottom-[22%] right-[18%] w-[420px] h-[420px] rounded-full bg-[#f4e7d8]/40 blur-[90px]"></div>
+          `;
+        }
+      });
+    });
+  });
+</script>
+<!-- END: Interactive Background Switcher JavaScript -->
+<!-- BEGIN: Lucide Icon Initialization -->
+<script data-purpose="icon-renderer">
+  lucide.createIcons();
+</script>
+<!-- END: Lucide Icon Initialization -->
+</body></html>
