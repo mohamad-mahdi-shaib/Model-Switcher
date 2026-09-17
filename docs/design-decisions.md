@@ -119,25 +119,50 @@ of preset names, so any background added later only has to declare its tone.
 **Glass — Classic.** The approved material from `references/code.html`,
 untouched.
 
-**Glass — Ultra Clear.** Refined against
-`references/IMG_3830_files/IMG_3830.jpeg` (the lower of the two renders; the
-phone chrome, video overlay and glass sculpture are out of scope):
+**Glass — Ultra Clear.** Rebuilt against `references/IMG_3827.jpeg` and
+`references/IMG_3830.jpeg` (the curved glass sculpture in those images is a
+reference for optical behaviour only; it is not reproduced in the UI).
 
-- Panel fill is a rim-weighted radial bottoming out at ~0.008 alpha through
-  the centre, so there is no milky fill.
-- Backdrop blur 3px, down from Classic's 16px, so background shapes stay
-  identifiable rather than smeared.
-- Bevel from narrow contours: a bright 1px top edge, a darker lower edge, and
-  a faint inner rim reading as glass thickness.
-- `::before` carries **uneven** specular — brightest at top-right, strong at
-  bottom-right, softer on the left — masked to a `--rim`-thick ring.
-- `::after` carries prismatic hints confined to two short rim segments by
-  narrow gradient stops. Never a full rainbow border or a panel-wide tint.
-- Both pseudo-elements are `pointer-events: none` and rim-masked, so they
-  cannot intercept clicks or cover focus rings.
+The first attempt failed because effects accumulated rather than because any
+one value was wrong. A bright border, an outer white bloom, a bright inset top
+edge, an 11px `brightness()` band, four corner radials up to 0.92 alpha, an
+inner contour and the pointer glint all landed on the same perimeter, giving a
+transparent rectangle inside a luminous white frame.
 
-These are **visual approximations**. Nothing here computes refraction,
-dispersion or caustics.
+The rule now is one job per layer, applied to **every** glass surface at graded
+strength rather than to the main panel alone:
+
+| Layer | Job |
+| --- | --- |
+| surface `background` | low neutral tint + one faint diagonal reflection (peak 0.035) |
+| `::before` | outer edge ring: 135° directional bevel, bright top-left, transparent stretch, dark stretch lower-right, restrained return highlight, plus two small corner glints |
+| `::after` | faint inner rim inset 2px, with a darker lower contour for thickness |
+| `.edge-glint` | pointer response only, same narrow ring |
+
+Tier tokens (`--edge-lit`, `--edge-soft`, `--edge-dark`, `--edge-inner`,
+`--rim-line`) set intensity per surface so nothing is uniformly bright:
+main panel > sidebar > composer > buttons, chips and message bubbles.
+
+Removed from Ultra Clear: the broad floating-card shadow (now only a soft
+grounding shadow, large blur, almost no offset), the outer white glow, the
+thick bright border (0.58 → 0.16), and prismatic colour, which stays disabled
+until the neutral material passes review.
+
+Text carries no `text-shadow` in Ultra Clear; `--ink-shadow*` resolve to
+`none`. All decorative layers are `pointer-events: none` pseudo-elements at
+`z-index: 0`, below content at `z-10`/`z-20`.
+
+These are **visual approximations**. Nothing computes refraction, dispersion
+or caustics.
+
+### Popovers cannot blur what is behind them
+
+Worth recording because it defeated an earlier fix. `.glass-modal` had its
+blur raised to 44px to stop chat text bleeding through the picker, and it did
+not work. A `backdrop-filter` on the panel makes that panel a **backdrop
+root**, so a popover nested inside it can only ever blur the page background —
+never the chat text painted within the same panel. Occlusion has to come from
+the fill, which is now ~0.93 alpha. This affects the popover in Classic too.
 
 ### Why the centre looked milky
 
@@ -178,9 +203,17 @@ changes while the pointer moves.
   backgrounds, were reasoned from the box model and verified against rendered
   markup and compiled CSS — never observed in a browser. The Luxury artwork in
   particular has not been seen rendered.
-- **Two background layers still flatten the panel centre**, and both are shared
-  with Classic so they were left alone: the ambient orbs (90–130px blur) on the
-  gradient presets, and the `calm` centre wash inside each Luxury SVG. If Ultra
-  Clear should reveal more detail, reducing the SVG `calm` stop opacity is the
-  next lever — but it changes how Classic looks on those backgrounds too, so it
-  is a deliberate decision rather than a tweak.
+- **The Luxury backgrounds are too flat to show off transparency.** Confirmed by
+  browser inspection on Amethyst Bloom: the panel is genuinely transparent, but
+  there is little behind it to see. Each Luxury SVG paints a `calm` centre wash
+  at 0.5 opacity over the middle, and the Ambient presets add 90-130px blurred
+  orbs. Both are background layers shared with Classic, so they were left alone
+  rather than changed silently. Lowering the SVG `calm` stop is the single
+  highest-value next change if Ultra Clear should reveal more — but it alters
+  Classic on those backgrounds too, so it is your call.
+- **Popover fill changed for Classic as well.** Fixing the text bleed-through
+  required raising `--modal-fill` to ~0.93 alpha, and that token is shared. The
+  picker is therefore more opaque in Classic than before. The glass materials
+  themselves are untouched: every Classic rule was verified byte-identical.
+- **Prismatic colour is currently disabled** pending review of the neutral
+  material.
