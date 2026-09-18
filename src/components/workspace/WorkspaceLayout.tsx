@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChatHeader } from "@/components/workspace/ChatHeader";
 import { ConversationSidebar } from "@/components/workspace/ConversationSidebar";
-import { MessageComposer } from "@/components/workspace/MessageComposer";
+import {
+  MessageComposer,
+  type ComposerHandle,
+} from "@/components/workspace/MessageComposer";
 import { MessageList } from "@/components/workspace/MessageList";
 import {
   AMBIENT_ORBS,
@@ -13,53 +16,72 @@ import {
   type BackgroundId,
   type GlassStyleId,
 } from "@/lib/backgrounds";
-import { DEFAULT_PROVIDER, type ProviderId } from "@/lib/providers";
+import {
+  DEFAULT_PROVIDER,
+  isProviderUsable,
+  type AvailabilityMap,
+} from "@/lib/providers";
 import { useEdgeGlint } from "@/lib/use-edge-glint";
-import { useChat } from "@/lib/use-chat";
-
-const NEW_CONVERSATION_TITLE = "New conversation";
+import { useConversations } from "@/lib/use-conversations";
 
 export function WorkspaceLayout() {
   const [background, setBackground] = useState<BackgroundId>(DEFAULT_BACKGROUND);
   const [glass, setGlass] = useState<GlassStyleId>(DEFAULT_GLASS);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [provider, setProvider] = useState<ProviderId>(DEFAULT_PROVIDER);
-  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [availability, setAvailability] = useState<AvailabilityMap | null>(null);
+  const composerRef = useRef<ComposerHandle>(null);
 
-  const { messages, status, error, errorInfo, send, stop, retry, reset } =
-    useChat();
+  const {
+    saved,
+    active,
+    activeId,
+    hydrated,
+    storageStatus,
+    messages,
+    status,
+    error,
+    errorInfo,
+    send,
+    stop,
+    retry,
+    selectConversation,
+    newConversation,
+    renameConversation,
+    deleteConversation,
+    setConversationProvider,
+  } = useConversations();
 
   const isUltra = glass === "ultra";
   const { hostRef, glintRef } = useEdgeGlint<HTMLElement>(isUltra);
 
-  // Probe configuration once so the setup state shows on load rather than
-  // after a failed send.
+  // Ask the server which providers are actually configured. Only booleans and
+  // model names come back — never a key.
   useEffect(() => {
     let cancelled = false;
     fetch("/api/chat")
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled) setConfigured(Boolean(data?.configured));
+        if (!cancelled) setAvailability((data?.providers as AvailabilityMap) ?? {});
       })
       .catch(() => {
-        if (!cancelled) setConfigured(false);
+        if (!cancelled) setAvailability({});
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const notConfigured = configured === false;
-  // The first user message becomes the conversation title.
-  const title =
-    messages.find((m) => m.role === "user")?.content.slice(0, 48) ??
-    NEW_CONVERSATION_TITLE;
+  const provider = active?.providerId ?? DEFAULT_PROVIDER;
+  const geminiReady = availability === null || isProviderUsable("gemini", availability);
+  const notConfigured = availability !== null && !isProviderUsable(provider, availability);
+  const title = active?.title ?? "New conversation";
 
   return (
     <div
       className="workspace-root relative flex h-dvh w-full items-center justify-center overflow-hidden p-4 lg:p-6"
       data-glass={glass}
       data-preset={background}
+      data-provider={provider}
       data-tone={backgroundTone(background)}
     >
       <div
@@ -77,9 +99,13 @@ export function WorkspaceLayout() {
 
       <main className="relative z-10 flex h-full max-h-[720px] w-full max-w-[1360px] items-stretch justify-center gap-4 lg:gap-5">
         <ConversationSidebar
-          currentTitle={title}
-          hasMessages={messages.length > 0}
-          onNewConversation={reset}
+          activeId={activeId}
+          conversations={saved}
+          onDelete={deleteConversation}
+          onNew={newConversation}
+          onRename={renameConversation}
+          onSelect={selectConversation}
+          storageStatus={storageStatus}
         />
 
         <section
@@ -93,10 +119,14 @@ export function WorkspaceLayout() {
           <ChatHeader
             activeBackground={background}
             activeGlass={glass}
+            availability={availability}
+            conversationStarted={messages.length > 0}
             onPickerOpenChange={setPickerOpen}
             onSelectBackground={setBackground}
             onSelectGlass={setGlass}
-            onSelectProvider={setProvider}
+            onSelectProvider={(id) => {
+              if (activeId) setConversationProvider(activeId, id);
+            }}
             pickerOpen={pickerOpen}
             provider={provider}
             title={title}
@@ -106,18 +136,21 @@ export function WorkspaceLayout() {
             error={notConfigured && !error ? "MISSING_KEY" : error}
             errorInfo={errorInfo}
             messages={messages}
-            onRetry={() => retry(provider)}
+            onRetry={retry}
+            onUsePrompt={(text) => composerRef.current?.setText(text)}
+            provider={provider}
             status={status}
           />
 
           <MessageComposer
-            disabled={notConfigured}
+            disabled={!hydrated || !geminiReady}
             disabledReason={
-              notConfigured
+              !geminiReady
                 ? "Add GEMINI_API_KEY to .env.local to start chatting."
                 : undefined
             }
-            onSend={(text) => send(text, provider)}
+            handleRef={composerRef}
+            onSend={send}
             onStop={stop}
             status={status}
           />

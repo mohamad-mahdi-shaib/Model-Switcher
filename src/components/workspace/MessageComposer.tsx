@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { SparklesIcon, StopIcon } from "@/components/icons";
-import type { ChatStatus } from "@/lib/use-chat";
+import type { ChatStatus } from "@/lib/use-conversations";
+
+export type ComposerHandle = {
+  /** Places text in the field for editing. Never sends on its own. */
+  setText: (text: string) => void;
+};
 
 type MessageComposerProps = {
   status: ChatStatus;
@@ -10,6 +15,7 @@ type MessageComposerProps = {
   disabledReason?: string;
   onSend: (text: string) => boolean;
   onStop: () => void;
+  handleRef?: Ref<ComposerHandle>;
 };
 
 const MAX_ROWS = 6;
@@ -20,18 +26,31 @@ export function MessageComposer({
   disabledReason,
   onSend,
   onStop,
+  handleRef,
 }: MessageComposerProps) {
   const [value, setValue] = useState("");
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const streaming = status === "streaming";
+
+  useImperativeHandle(handleRef, () => ({
+    setText: (text: string) => {
+      setValue(text);
+      const el = areaRef.current;
+      if (el) {
+        el.focus();
+        requestAnimationFrame(() => {
+          el.selectionStart = el.selectionEnd = text.length;
+        });
+      }
+    },
+  }));
 
   // Grow with content up to MAX_ROWS, then scroll. Keeps the composer visible.
   useEffect(() => {
     const el = areaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    const line = 20;
-    el.style.height = `${Math.min(el.scrollHeight, line * MAX_ROWS)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 20 * MAX_ROWS)}px`;
   }, [value]);
 
   const submit = () => {
@@ -51,7 +70,11 @@ export function MessageComposer({
           onKeyDown={(event) => {
             // Enter sends; Shift+Enter inserts a line break. IME composition
             // must not be interrupted.
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
               event.preventDefault();
               submit();
             }

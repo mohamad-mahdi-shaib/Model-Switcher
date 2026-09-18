@@ -560,3 +560,139 @@ body {
     transform: none;
   }
 }
+
+/* --- Message motion, indicator, provider identity -------------------------
+   Milestone 3C-A / 4B. All CSS: no animation library is pulled in for what is
+   a fade and a few pixels of travel.
+-------------------------------------------------------------------------- */
+
+@keyframes msg-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Applied only to rows that are new since the previous render, so a restored
+   history does not replay every animation on mount. */
+.msg-enter {
+  animation: msg-enter 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes typing-dot {
+  0%, 60%, 100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 0.9;
+    transform: translateY(-2px);
+  }
+}
+
+.typing-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.typing-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--accent, var(--ink));
+  animation: typing-dot 1.25s ease-in-out infinite;
+}
+.typing-dots i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.typing-dots i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+/* Streaming caret. Steady, not blinking: a blink next to arriving text reads
+   as a glitch rather than progress. */
+.stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 0.9em;
+  margin-left: 2px;
+  transform: translateY(2px);
+  background: var(--ink);
+  opacity: 0.55;
+}
+
+/* --- Provider identity ----------------------------------------------------
+   Restrained: a single accent token drives the avatar rim, the active chip and
+   the typing dots. The panel, background and ink are untouched, so contrast is
+   unchanged on all seven backgrounds.
+-------------------------------------------------------------------------- */
+
+.workspace-root[data-provider="gemini"] {
+  --accent: #6f7f9b;
+}
+.workspace-root[data-provider="claude"] {
+  --accent: #a8764e;
+}
+.workspace-root[data-provider="gpt"] {
+  --accent: #4f8c72;
+}
+/* Dark backgrounds get a lifted accent so it stays visible without glare. */
+.workspace-root[data-tone="dark"][data-provider="gemini"] {
+  --accent: #9fb0cc;
+}
+.workspace-root[data-tone="dark"][data-provider="claude"] {
+  --accent: #d8a978;
+}
+.workspace-root[data-tone="dark"][data-provider="gpt"] {
+  --accent: #86c4a6;
+}
+
+.provider-avatar {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 1px 6px -3px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.provider-chip-active {
+  border-color: color-mix(in srgb, var(--accent) 55%, rgba(255, 255, 255, 0.8));
+  background: color-mix(in srgb, var(--accent) 16%, rgba(255, 255, 255, 0.3));
+}
+
+/* Localised accent in the pointer glint, Clear Glass only. */
+.workspace-root[data-glass="ultra"] .edge-glint {
+  background: radial-gradient(
+    130px 130px at var(--glint-x, 50%) var(--glint-y, 0%),
+    color-mix(in srgb, var(--accent) 30%, var(--glint-color)) 0%,
+    rgba(255, 255, 255, 0) 70%
+  );
+}
+
+/* --- Markdown -------------------------------------------------------------- */
+
+.workspace-root[data-tone="light"] {
+  --code-fill: rgba(255, 255, 255, 0.28);
+}
+.workspace-root[data-tone="dark"] {
+  --code-fill: rgba(10, 12, 16, 0.34);
+}
+
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+.markdown-body > *:last-child {
+  margin-bottom: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-enter {
+    animation: none;
+  }
+  .typing-dots i {
+    animation: none;
+    opacity: 0.6;
+  }
+}

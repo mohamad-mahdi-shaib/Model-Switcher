@@ -8,10 +8,18 @@
 
 export type ChatRole = "user" | "assistant";
 
+/**
+ * `state` tracks completion so a reply cut off by Stop or a refresh can be
+ * shown honestly as interrupted, rather than as still-streaming or as a
+ * complete answer. Absent on messages predating persistence.
+ */
+export type MessageState = "complete" | "interrupted" | "streaming";
+
 export type ChatMessage = {
   id: string;
   role: ChatRole;
   content: string;
+  state?: MessageState;
 };
 
 /** Sent to the API. Ids and UI-only state are stripped. */
