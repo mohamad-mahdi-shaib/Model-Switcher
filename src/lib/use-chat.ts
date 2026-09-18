@@ -115,6 +115,13 @@ export function useChat(initial: readonly ChatMessage[] = []) {
         }
       }
 
+      // A stream can finish having produced no text at all (a turn the model
+      // declines, or one spent entirely on internal reasoning). Without this
+      // the UI would simply go quiet, leaving no message and no explanation.
+      if (!opened) {
+        fail("EMPTY_REPLY");
+        return;
+      }
       setStatus("idle");
     } catch (err) {
       if ((err as Error)?.name === "AbortError") {

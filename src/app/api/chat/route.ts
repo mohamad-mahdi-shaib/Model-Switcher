@@ -8,8 +8,12 @@ import type { ChatErrorCode, StreamEvent, WireMessage } from "@/lib/chat";
  * client component and never prefixed NEXT_PUBLIC_, so it cannot reach the
  * browser bundle. Responses are streamed back as NDJSON.
  *
- * Verified against the official docs on 2026-09-18: the SDK is @google/genai,
- * and gemini-3.8-flash is stable with a free tier. The stateless
+ * Verified against the official docs and live calls on 2026-09-18: the SDK is
+ * @google/genai. Model choice was settled empirically, not from the docs alone:
+ *   - gemini-2.5-flash  -> 404, "no longer available to new users"
+ *   - gemini-3.8-flash  -> frequent 503 "high demand"; 55-150s when it did work
+ *   - gemini-3.6-flash  -> Google's own recommended replacement; 6-16s
+ * so 3.6-flash is the default. The stateless
  * models.generateContentStream call is used rather than the newer Interactions
  * API, because conversation state lives in the client for this milestone and is
  * sent in full on every turn.
@@ -19,12 +23,22 @@ export const runtime = "nodejs";
 // Never cache a chat completion.
 export const dynamic = "force-dynamic";
 
-const DEFAULT_MODEL = "gemini-3.8-flash";
+const DEFAULT_MODEL = "gemini-3.6-flash";
 const MAX_MESSAGES = 50;
 const MAX_CHARS = 16_000;
 
 function errorResponse(code: ChatErrorCode, status: number, detail?: string) {
   return Response.json({ code, detail }, { status });
+}
+
+/**
+ * Server-side diagnostics. Logs the upstream failure so a misconfiguration is
+ * debuggable from the terminal. Never logs the API key.
+ */
+function logUpstream(where: string, error: unknown) {
+  const status = (error as { status?: number })?.status;
+  const message = (error as { message?: string })?.message ?? String(error);
+  console.error("[chat] upstream failure", { where, status, message });
 }
 
 /** Maps an SDK failure onto our error vocabulary. */
@@ -33,6 +47,20 @@ function classify(error: unknown): ChatErrorCode {
   const text = String(
     (error as { message?: string })?.message ?? error,
   ).toLowerCase();
+
+  // A transport failure reaching Google carries no HTTP status. Reporting it
+  // as an upstream fault would blame Gemini for a connectivity problem and
+  // point the user at the wrong fix.
+  if (
+    text.includes("fetch failed") ||
+    text.includes("econnreset") ||
+    text.includes("etimedout") ||
+    text.includes("enotfound") ||
+    text.includes("socket hang up") ||
+    text.includes("network")
+  ) {
+    return "NETWORK";
+  }
 
   // Message text is inspected BEFORE status: Gemini answers an invalid API key
   // with HTTP 400, which would otherwise be reported as a malformed request.
@@ -54,6 +82,15 @@ function classify(error: unknown): ChatErrorCode {
     return "INVALID_KEY";
   }
 
+  // Google-side capacity, not our request and not the user's fault.
+  if (
+    status === 503 ||
+    text.includes("unavailable") ||
+    text.includes("high demand") ||
+    text.includes("overloaded")
+  ) {
+    return "MODEL_BUSY";
+  }
   if (status === 429) return "RATE_LIMIT";
   if (status === 401 || status === 403) return "INVALID_KEY";
   if (status === 400 || status === 404) return "BAD_REQUEST";
@@ -123,18 +160,35 @@ export async function POST(request: Request) {
   const ai = new GoogleGenAI({ apiKey });
   const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
 
-  let stream: AsyncGenerator<{ text?: string }>;
-  try {
-    stream = await ai.models.generateContentStream({
-      model,
-      contents,
-      config: { abortSignal: request.signal },
-    });
-  } catch (error) {
-    // Thrown before any bytes were written, so a real status code is still
-    // available to the client.
-    return errorResponse(classify(error), 502);
+  // Transient failures are common here: Google returns 503 "high demand" under
+  // load, and the transport itself can drop. Both are worth one or two quick
+  // retries. Auth, quota and malformed-request failures are NOT retried --
+  // repeating them would just burn quota and delay the real error.
+  const RETRYABLE = new Set<ChatErrorCode>(["MODEL_BUSY", "NETWORK"]);
+  let stream: AsyncGenerator<{ text?: string }> | undefined;
+  let lastCode: ChatErrorCode = "UPSTREAM";
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      stream = await ai.models.generateContentStream({
+        model,
+        contents,
+        config: { abortSignal: request.signal },
+      });
+      break;
+    } catch (error) {
+      if (request.signal.aborted) return new Response(null, { status: 499 });
+      lastCode = classify(error);
+      logUpstream(`generateContentStream attempt ${attempt + 1}`, error);
+      if (!RETRYABLE.has(lastCode) || attempt === 2) {
+        // Thrown before any bytes were written, so a real status code is still
+        // available to the client.
+        return errorResponse(lastCode, 502);
+      }
+      await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
+    }
   }
+  if (!stream) return errorResponse(lastCode, 502);
 
   const encoder = new TextEncoder();
   const send = (event: StreamEvent) =>
@@ -153,6 +207,7 @@ export async function POST(request: Request) {
         if (request.signal.aborted) {
           // The user pressed Stop; not an error worth reporting.
         } else {
+          logUpstream("stream", error);
           const code = classify(error);
           controller.enqueue(
             send({ type: "error", code, message: String(code) }),

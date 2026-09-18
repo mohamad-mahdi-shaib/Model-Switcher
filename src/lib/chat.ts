@@ -26,7 +26,9 @@ export type ChatErrorCode =
   | "PROVIDER_DISABLED"
   | "BAD_REQUEST"
   | "RATE_LIMIT"
+  | "MODEL_BUSY"
   | "UPSTREAM"
+  | "EMPTY_REPLY"
   | "NETWORK"
   | "ABORTED";
 
@@ -45,7 +47,11 @@ export const ERROR_COPY: Record<ChatErrorCode, string> = {
   BAD_REQUEST: "That message could not be sent. Try rephrasing it.",
   RATE_LIMIT:
     "Gemini is rate-limited right now. Wait a moment, then retry.",
+  MODEL_BUSY:
+    "Gemini is experiencing high demand and turned the request away. This is temporary - retry in a moment.",
   UPSTREAM: "Gemini could not complete that request.",
+  EMPTY_REPLY:
+    "Gemini returned an empty response. Retry, or rephrase the question.",
   NETWORK: "Could not reach the server. Check your connection, then retry.",
   ABORTED: "Stopped.",
 };
