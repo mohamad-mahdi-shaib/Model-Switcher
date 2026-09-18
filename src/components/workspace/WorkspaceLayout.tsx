@@ -26,7 +26,8 @@ export function WorkspaceLayout() {
   const [provider, setProvider] = useState<ProviderId>(DEFAULT_PROVIDER);
   const [configured, setConfigured] = useState<boolean | null>(null);
 
-  const { messages, status, error, send, stop, retry, reset } = useChat();
+  const { messages, status, error, errorInfo, send, stop, retry, reset } =
+    useChat();
 
   const isUltra = glass === "ultra";
   const { hostRef, glintRef } = useEdgeGlint<HTMLElement>(isUltra);
@@ -103,6 +104,7 @@ export function WorkspaceLayout() {
 
           <MessageList
             error={notConfigured && !error ? "MISSING_KEY" : error}
+            errorInfo={errorInfo}
             messages={messages}
             onRetry={() => retry(provider)}
             status={status}

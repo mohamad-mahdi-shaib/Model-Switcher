@@ -5,6 +5,7 @@ import {
   newId,
   toWire,
   type ChatErrorCode,
+  type ChatErrorInfo,
   type ChatMessage,
   type StreamEvent,
 } from "@/lib/chat";
@@ -16,6 +17,8 @@ export function useChat(initial: readonly ChatMessage[] = []) {
   const [messages, setMessages] = useState<ChatMessage[]>([...initial]);
   const [status, setStatus] = useState<ChatStatus>("idle");
   const [error, setError] = useState<ChatErrorCode | null>(null);
+  // Quota facts straight from Google, shown verbatim rather than guessed at.
+  const [errorInfo, setErrorInfo] = useState<ChatErrorInfo | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   // Guards against a double submit landing two requests before React re-renders.
@@ -39,12 +42,14 @@ export function useChat(initial: readonly ChatMessage[] = []) {
     inFlightRef.current = true;
     setStatus("streaming");
     setError(null);
+    setErrorInfo(null);
 
     const replyId = newId("a");
     let opened = false;
 
-    const fail = (code: ChatErrorCode) => {
+    const fail = (code: ChatErrorCode, info?: ChatErrorInfo) => {
       setError(code);
+      setErrorInfo(info ?? null);
       setStatus("error");
       // Drop an empty placeholder so a failed turn leaves no blank bubble.
       setMessages((prev) =>
@@ -62,7 +67,10 @@ export function useChat(initial: readonly ChatMessage[] = []) {
 
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
-        fail((payload?.code as ChatErrorCode) ?? "UPSTREAM");
+        fail(
+          (payload?.code as ChatErrorCode) ?? "UPSTREAM",
+          payload?.info as ChatErrorInfo | undefined,
+        );
         return;
       }
       if (!response.body) {
@@ -109,7 +117,7 @@ export function useChat(initial: readonly ChatMessage[] = []) {
               );
             }
           } else if (event.type === "error") {
-            fail(event.code);
+            fail(event.code, event.info);
             return;
           }
         }
@@ -177,7 +185,8 @@ export function useChat(initial: readonly ChatMessage[] = []) {
     setMessages([]);
     setStatus("idle");
     setError(null);
+    setErrorInfo(null);
   }, []);
 
-  return { messages, status, error, send, stop, retry, reset };
+  return { messages, status, error, errorInfo, send, stop, retry, reset };
 }

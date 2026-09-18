@@ -1,5 +1,10 @@
 import { GoogleGenAI, type Content } from "@google/genai";
-import type { ChatErrorCode, StreamEvent, WireMessage } from "@/lib/chat";
+import type {
+  ChatErrorCode,
+  ChatErrorInfo,
+  StreamEvent,
+  WireMessage,
+} from "@/lib/chat";
 
 /**
  * Server-only Gemini bridge.
@@ -27,8 +32,63 @@ const DEFAULT_MODEL = "gemini-3.6-flash";
 const MAX_MESSAGES = 50;
 const MAX_CHARS = 16_000;
 
-function errorResponse(code: ChatErrorCode, status: number, detail?: string) {
-  return Response.json({ code, detail }, { status });
+function errorResponse(
+  code: ChatErrorCode,
+  status: number,
+  detail?: string,
+  info?: ChatErrorInfo,
+) {
+  return Response.json({ code, detail, info }, { status });
+}
+
+/**
+ * Pulls the quota facts out of a Google 429.
+ *
+ * The payload is a JSON string whose `message` contains another JSON document,
+ * so the useful parts (RetryInfo, QuotaFailure) need a second parse. Worth the
+ * effort: quotaId is the only reliable way to tell a per-minute throttle from a
+ * per-day cap, and the two need completely different advice.
+ */
+function parseQuota(error: unknown): ChatErrorInfo | undefined {
+  const raw = String((error as { message?: string })?.message ?? "");
+  if (!raw) return undefined;
+
+  let text = raw;
+  try {
+    const outer = JSON.parse(raw) as { error?: { message?: string } };
+    if (outer?.error?.message) text = outer.error.message;
+  } catch {
+    // Not wrapped; fall through and scan the raw text.
+  }
+
+  const info: ChatErrorInfo = {};
+
+  // RetryInfo: "retryDelay": "45s", or "Please retry in 45.9068s."
+  const delay =
+    text.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/) ??
+    text.match(/retry in (\d+(?:\.\d+)?)s/i);
+  if (delay) info.retryAfterSeconds = Math.ceil(Number(delay[1]));
+
+  const quotaId = text.match(/"quotaId"\s*:\s*"([^"]+)"/);
+  if (quotaId) info.quotaId = quotaId[1];
+
+  const quotaValue = text.match(/"quotaValue"\s*:\s*"?(\d+)"?/);
+  if (quotaValue) info.quotaValue = Number(quotaValue[1]);
+
+  const model = text.match(/"model"\s*:\s*"([^"]+)"/);
+  if (model) info.quotaModel = model[1];
+
+  const id = info.quotaId ?? "";
+  info.quotaScope =
+    info.quotaValue === 0
+      ? "zero"
+      : /PerDay/i.test(id)
+        ? "day"
+        : /PerMinute/i.test(id)
+          ? "minute"
+          : "unknown";
+
+  return Object.keys(info).length ? info : undefined;
 }
 
 /**
@@ -183,7 +243,7 @@ export async function POST(request: Request) {
       if (!RETRYABLE.has(lastCode) || attempt === 2) {
         // Thrown before any bytes were written, so a real status code is still
         // available to the client.
-        return errorResponse(lastCode, 502);
+        return errorResponse(lastCode, 502, undefined, parseQuota(error));
       }
       await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
     }
@@ -210,7 +270,12 @@ export async function POST(request: Request) {
           logUpstream("stream", error);
           const code = classify(error);
           controller.enqueue(
-            send({ type: "error", code, message: String(code) }),
+            send({
+              type: "error",
+              code,
+              message: String(code),
+              info: parseQuota(error),
+            }),
           );
         }
       } finally {

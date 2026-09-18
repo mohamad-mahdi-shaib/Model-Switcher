@@ -1,14 +1,20 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertIcon, BotIcon, RefreshIcon, SparklesIcon } from "@/components/icons";
-import { ERROR_COPY, type ChatErrorCode, type ChatMessage } from "@/lib/chat";
+import {
+  ERROR_COPY,
+  type ChatErrorCode,
+  type ChatErrorInfo,
+  type ChatMessage,
+} from "@/lib/chat";
 import type { ChatStatus } from "@/lib/use-chat";
 
 type MessageListProps = {
   messages: readonly ChatMessage[];
   status: ChatStatus;
   error: ChatErrorCode | null;
+  errorInfo: ChatErrorInfo | null;
   onRetry: () => void;
 };
 
@@ -92,11 +98,74 @@ GEMINI_API_KEY=your-key-here
   );
 }
 
+/**
+ * Counts down Google's retryDelay so the wait is concrete, not guesswork.
+ * Reset happens by remounting (see the key on QuotaDetail) rather than by
+ * setting state inside the effect.
+ */
+function useCountdown(seconds: number | undefined) {
+  const [left, setLeft] = useState(seconds ?? 0);
+  useEffect(() => {
+    if (!seconds) return;
+    const t = setInterval(() => setLeft((v) => (v <= 1 ? 0 : v - 1)), 1000);
+    return () => clearInterval(t);
+  }, [seconds]);
+  return left;
+}
+
+function QuotaDetail({ info }: { info: ChatErrorInfo }) {
+  const left = useCountdown(info.retryAfterSeconds);
+  const perDay = info.quotaScope === "day";
+  const perMinute = info.quotaScope === "minute";
+
+  return (
+    <div className="mt-1.5 space-y-1 text-[11px] glass-text-subtle">
+      {info.quotaValue !== undefined ? (
+        <p>
+          Limit: <strong className="font-semibold">{info.quotaValue}</strong>{" "}
+          requests
+          {perDay ? " per day" : perMinute ? " per minute" : ""}
+          {info.quotaModel ? ` for ${info.quotaModel}` : ""} on the free tier.
+        </p>
+      ) : null}
+
+      {info.retryAfterSeconds ? (
+        <p>
+          Google asks to retry in{" "}
+          <strong className="font-semibold">
+            {left > 0 ? `${left}s` : "now"}
+          </strong>
+          .
+          {perDay ? (
+            <>
+              {" "}
+              That delay only paces requests — a{" "}
+              <strong className="font-semibold">daily</strong> cap will not
+              clear until the quota resets.
+            </>
+          ) : null}
+        </p>
+      ) : null}
+
+      {info.quotaScope === "zero" ? (
+        <p>This model has no free-tier quota on this project.</p>
+      ) : null}
+
+      <p>
+        Current usage:{" "}
+        <span className="font-mono">https://ai.dev/rate-limit</span>
+      </p>
+    </div>
+  );
+}
+
 function ErrorRow({
   code,
+  info,
   onRetry,
 }: {
   code: ChatErrorCode;
+  info: ChatErrorInfo | null;
   onRetry: () => void;
 }) {
   return (
@@ -106,6 +175,12 @@ function ErrorRow({
       </span>
       <div className="min-w-0">
         <p className="text-[12.5px] glass-text-dark">{ERROR_COPY[code]}</p>
+        {info ? (
+          <QuotaDetail
+            info={info}
+            key={`${info.quotaId ?? ""}-${info.retryAfterSeconds ?? 0}`}
+          />
+        ) : null}
         <button
           className="glass-btn focus-glass mt-2 inline-flex h-[26px] items-center gap-1.5 rounded-full px-3 text-[11px] font-medium glass-text-dark"
           onClick={onRetry}
@@ -123,6 +198,7 @@ export function MessageList({
   messages,
   status,
   error,
+  errorInfo,
   onRetry,
 }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
@@ -174,7 +250,7 @@ export function MessageList({
         ) : null}
 
         {error && !needsSetup ? (
-          <ErrorRow code={error} onRetry={onRetry} />
+          <ErrorRow code={error} info={errorInfo} onRetry={onRetry} />
         ) : null}
 
         <div ref={endRef} />
