@@ -112,3 +112,32 @@ export function MessageIcon(props: IconProps) {
     </Icon>
   );
 }
+
+export function StopIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect height="12" width="12" x="6" y="6" rx="2" fill="currentColor" />
+    </Icon>
+  );
+}
+
+export function AlertIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 8v4" />
+      <path d="M12 16h.01" />
+    </Icon>
+  );
+}
+
+export function RefreshIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+      <path d="M3 21v-5h5" />
+    </Icon>
+  );
+}

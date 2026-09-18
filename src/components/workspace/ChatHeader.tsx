@@ -4,12 +4,15 @@ import { BackgroundPicker } from "@/components/workspace/BackgroundPicker";
 import { ChevronDownIcon } from "@/components/icons";
 import type { BackgroundId, GlassStyleId } from "@/lib/backgrounds";
 import {
-  ACTIVE_CONVERSATION_TITLE,
-  ACTIVE_MODEL_ID,
-  AI_MODELS,
-} from "@/lib/sample-data";
+  COMING_SOON_LABEL,
+  PROVIDERS,
+  type ProviderId,
+} from "@/lib/providers";
 
 type ChatHeaderProps = {
+  title: string;
+  provider: ProviderId;
+  onSelectProvider: (id: ProviderId) => void;
   pickerOpen: boolean;
   activeBackground: BackgroundId;
   activeGlass: GlassStyleId;
@@ -19,6 +22,9 @@ type ChatHeaderProps = {
 };
 
 export function ChatHeader({
+  title,
+  provider,
+  onSelectProvider,
   pickerOpen,
   activeBackground,
   activeGlass,
@@ -28,40 +34,56 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   return (
     <header className="relative z-20 flex w-full flex-wrap items-center justify-between gap-3">
-      <h1 className="flex">
-        <button
-          className="focus-glass flex items-center gap-1.5 rounded-lg text-[17px] font-semibold tracking-tight glass-text-dark"
-          disabled
-          title="Switching conversations arrives in a later milestone"
-          type="button"
-        >
-          <span>{ACTIVE_CONVERSATION_TITLE}</span>
-          <ChevronDownIcon className="mt-0.5 h-4 w-4" strokeWidth="2.4" />
-        </button>
+      <h1 className="flex min-w-0">
+        <span className="truncate text-[17px] font-semibold tracking-tight glass-text-dark">
+          {title}
+        </span>
+        <ChevronDownIcon
+          aria-hidden="true"
+          className="mt-1 ml-1.5 h-4 w-4 shrink-0 opacity-40 glass-text-dark"
+          strokeWidth="2.4"
+        />
       </h1>
 
       <div className="flex items-center gap-2">
         <div
-          aria-label="Model"
+          aria-label="AI provider"
           className="glass-btn flex h-[30px] items-center gap-0.5 rounded-full p-0.5"
-          role="group"
+          role="radiogroup"
         >
-          {AI_MODELS.map((model) => {
-            const isActive = model.id === ACTIVE_MODEL_ID;
+          {PROVIDERS.map((item) => {
+            const isActive = item.id === provider && item.enabled;
+            // Disabled providers get aria-disabled rather than the disabled
+            // attribute, so their explanation stays reachable by keyboard.
             return (
               <button
-                aria-pressed={isActive}
+                aria-checked={isActive}
+                aria-disabled={!item.enabled}
+                aria-label={
+                  item.enabled
+                    ? item.label
+                    : `${item.label} — ${COMING_SOON_LABEL}. ${item.note ?? ""}`
+                }
                 className={`focus-glass rounded-full px-2.5 py-[3px] text-[11.5px] font-medium transition-colors ${
                   isActive
                     ? "border border-white/80 bg-white/30 glass-text-dark"
-                    : "border border-transparent glass-text-muted"
+                    : item.enabled
+                      ? "border border-transparent glass-text-muted hover:bg-white/10"
+                      : "cursor-not-allowed border border-transparent opacity-45 glass-text-subtle"
                 }`}
-                disabled
-                key={model.id}
-                title="Model switching arrives in a later milestone"
+                key={item.id}
+                onClick={() => {
+                  if (!item.enabled) return;
+                  onSelectProvider(item.id);
+                }}
+                role="radio"
+                title={item.enabled ? undefined : `${COMING_SOON_LABEL} — ${item.note}`}
                 type="button"
               >
-                {model.label}
+                {item.label}
+                {item.enabled ? null : (
+                  <span className="sr-only"> ({COMING_SOON_LABEL})</span>
+                )}
               </button>
             );
           })}
