@@ -133,6 +133,9 @@ export function WorkspaceLayout() {
           />
 
           <MessageList
+            // Keyed by conversation so the entrance-animation baseline is
+            // rebuilt on switch instead of animating the whole transcript.
+            key={activeId ?? "none"}
             error={notConfigured && !error ? "MISSING_KEY" : error}
             errorInfo={errorInfo}
             messages={messages}

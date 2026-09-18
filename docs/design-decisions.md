@@ -240,3 +240,41 @@ changes while the pointer moves.
   themselves are untouched: every Classic rule was verified byte-identical.
 - **Prismatic colour is currently disabled** pending review of the neutral
   material.
+
+## Milestone 3B-4B architecture notes
+
+**Persistence (`src/lib/storage.ts`).** Versioned `localStorage` schema. Two
+rules drive the design: never write before hydration (the initial empty React
+state would otherwise overwrite saved conversations), and never overwrite data
+we cannot parse (an unknown version or malformed payload is reported and left
+byte-for-byte intact). Partial replies persist on a ~700ms throttle rather than
+per token, and flush on completion, Stop, conversation switch and page hide.
+
+**Streaming identity.** Every request carries a request id *and* a conversation
+id. Chunks are applied only while both still match, so a late chunk after an
+abort or a conversation switch is dropped rather than written into whatever is
+on screen. This is what makes "switch while streaming" safe.
+
+**Entrance motion.** A first attempt enabled animations by adding a class
+shortly after mount. That is wrong: adding the class later starts the animation
+on every restored row simultaneously — precisely the replay it was meant to
+prevent. Replaced with a baseline set of ids captured at mount; rows in it never
+animate, and the component is keyed by conversation id so switching rebuilds the
+baseline instead of animating the whole transcript.
+
+**Markdown.** Hand-written parser to a typed AST rendered as React elements. No
+HTML string, no `dangerouslySetInnerHTML`, allow-listed link schemes. An
+unterminated fence renders as an OPEN code block so a block does not flicker
+between paragraph and code as tokens arrive. See Appendix B of the audit for the
+dependency rationale.
+
+**Provider abstraction.** `ChatProvider` + `ProviderError` + a server registry.
+The route contains no SDK import, no model id and no vendor error handling;
+retryability is decided by the adapter. OpenAI and Anthropic adapters are
+deliberately absent rather than stubbed — a stub would either fabricate replies
+or fail confusingly, and both are worse than an honest "not connected".
+
+**Provider identity.** One `--accent` token per provider, switched by
+`data-provider` on the workspace root and consumed by the avatar rim, active
+chip, typing dots and Clear Glass glint. Panels, backgrounds and ink are
+untouched, so text contrast is unchanged across all seven backgrounds.

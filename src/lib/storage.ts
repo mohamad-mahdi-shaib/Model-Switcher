@@ -144,7 +144,11 @@ export function saveConversations(
   conversations: Conversation[],
   activeId: string | null,
 ): StorageStatus {
-  if (!hasStorage()) return "unavailable";
+  // Deliberately NOT gated on hasStorage(): that helper probes with a write,
+  // which also throws when the quota is full, so using it here would report a
+  // full store as "unavailable" and give the user the wrong advice. Attempt the
+  // real write and classify whatever comes back.
+  if (typeof window === "undefined" || !window.localStorage) return "unavailable";
   const payload: PersistedState = { version: VERSION, conversations, activeId };
   try {
     window.localStorage.setItem(KEY, JSON.stringify(payload));

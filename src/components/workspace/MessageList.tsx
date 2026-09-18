@@ -38,9 +38,9 @@ const STARTERS = [
 
 /* ----------------------------------------------------------------- messages */
 
-function UserBubble({ content }: { content: string }) {
+function UserBubble({ content, fresh }: { content: string; fresh: boolean }) {
   return (
-    <div className="msg-enter flex justify-end pt-2">
+    <div className={`flex justify-end pt-2 ${fresh ? "msg-enter" : ""}`}>
       {/* whitespace-pre-wrap renders newlines without dangerouslySetInnerHTML. */}
       <div className="glass-btn max-w-md rounded-[22px] border border-white/80 px-5 py-2.5 text-[13px] leading-snug font-medium tracking-tight break-words whitespace-pre-wrap glass-text-dark">
         {content}
@@ -77,13 +77,15 @@ function CopyResponse({ text }: { text: string }) {
 function AssistantMessage({
   message,
   streaming,
+  fresh,
 }: {
   message: ChatMessage;
   streaming: boolean;
+  fresh: boolean;
 }) {
   const interrupted = message.state === "interrupted";
   return (
-    <div className="msg-enter group/msg flex items-start gap-3.5 pt-1">
+    <div className={`group/msg flex items-start gap-3.5 pt-1 ${fresh ? "msg-enter" : ""}`}>
       <span className="provider-avatar mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/15 shadow-sm backdrop-blur-md">
         <BotIcon className="h-3.5 w-3.5 glass-text-dark" />
       </span>
@@ -281,17 +283,17 @@ export function MessageList({
   const [atBottom, setAtBottom] = useState(true);
   const streaming = status === "streaming";
 
-  // Entrance motion is gated by CSS rather than by tracking which ids are new.
-  // A CSS animation fires when a node is INSERTED, and React keys keep existing
-  // rows mounted, so only genuinely new rows animate. The `anim-ready` class is
-  // added a tick after mount so a restored history does not replay on load.
-  const animGateRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = animGateRef.current;
-    if (!el) return;
-    const t = setTimeout(() => el.classList.add("anim-ready"), 60);
-    return () => clearTimeout(t);
-  }, []);
+  // Ids present when this conversation mounted. Those rows never animate, so a
+  // restored history stays still on load. Anything appended afterwards is a new
+  // DOM node and animates exactly once on insertion.
+  //
+  // An earlier attempt gated this with a class added shortly after mount, which
+  // was wrong: adding the class later starts the animation on every restored
+  // row at once -- the precise replay this is meant to avoid. The parent keys
+  // this component by conversation id, so switching chats remounts and rebuilds
+  // the baseline rather than animating the whole transcript.
+  const [baseline] = useState(() => new Set(messages.map((m) => m.id)));
+  const isFresh = (msgId: string) => !baseline.has(msgId);
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -325,10 +327,7 @@ export function MessageList({
         aria-label="Conversation"
         className="glass-scroll relative h-full space-y-6 overflow-y-auto pr-2"
         onScroll={onScroll}
-        ref={(node) => {
-          scrollRef.current = node;
-          animGateRef.current = node;
-        }}
+        ref={scrollRef}
         role="log"
       >
         {needsSetup ? <SetupState /> : null}
@@ -339,10 +338,12 @@ export function MessageList({
           return message.role === "user" ? (
             <UserBubble
               content={message.content}
+              fresh={isFresh(message.id)}
               key={message.id}
             />
           ) : (
             <AssistantMessage
+              fresh={isFresh(message.id)}
               key={message.id}
               message={message}
               streaming={streaming && isLast && message.state === "streaming"}

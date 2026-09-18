@@ -577,8 +577,8 @@ body {
   }
 }
 
-/* Applied only to rows that are new since the previous render, so a restored
-   history does not replay every animation on mount. */
+/* Applied only to rows appended after mount (see the baseline set in
+   MessageList), so a restored history does not replay on load. */
 .msg-enter {
   animation: msg-enter 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
