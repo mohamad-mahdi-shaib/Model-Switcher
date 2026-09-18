@@ -110,15 +110,21 @@ export type GlassStyle = {
   description: string;
 };
 
+/*
+ * `id` is the internal key that globals.css selects on via data-glass, and it
+ * deliberately does NOT track the display name: renaming a label must never
+ * change which material renders. "classic" is Glowy Glass, "ultra" is Clear
+ * Glass.
+ */
 export const GLASS_STYLES: readonly GlassStyle[] = [
   {
     id: "classic",
-    name: "Classic",
+    name: "Glowy Glass",
     description: "Approved frosted panel",
   },
   {
     id: "ultra",
-    name: "Ultra Clear",
+    name: "Clear Glass",
     description: "Open centre, lit edges",
   },
 ];
