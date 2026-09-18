@@ -57,27 +57,16 @@ body {
 }
 
 .workspace-root[data-preset="marble"] {
+  /* Milestone 2B: was peaking near 238 mean luminance, which left Ultra Clear
+     with no tonal ground to catch an edge against. Base gradient darkened and
+     broad slate forms added so the pane has something to sit on. */
   background:
-    radial-gradient(ellipse at 85% 15%, rgba(255, 255, 255, 0.9) 0%, rgba(235, 240, 248, 0.6) 35%, transparent 70%),
-    radial-gradient(circle at 20% 60%, rgba(220, 228, 238, 0.7) 0%, transparent 50%),
-    radial-gradient(circle at 70% 80%, rgba(200, 210, 225, 0.5) 0%, transparent 55%),
-    linear-gradient(135deg, #cbd5e1 0%, #e2e8f0 30%, #f1f5f9 60%, #cbd5e1 100%);
-}
-
-.workspace-root[data-preset="emerald"] {
-  background:
-    radial-gradient(ellipse at 85% 20%, rgba(52, 211, 153, 0.3) 0%, transparent 50%),
-    radial-gradient(circle at 18% 70%, rgba(16, 185, 129, 0.25) 0%, transparent 55%),
-    radial-gradient(circle at 50% 30%, rgba(6, 78, 59, 0.55) 0%, transparent 65%),
-    linear-gradient(140deg, #062820 0%, #064e3b 35%, #047857 70%, #022c22 100%);
-}
-
-.workspace-root[data-preset="sunset"] {
-  background:
-    radial-gradient(ellipse at 80% 20%, rgba(253, 186, 116, 0.6) 0%, rgba(251, 146, 60, 0.35) 35%, transparent 65%),
-    radial-gradient(circle at 15% 75%, rgba(244, 63, 94, 0.4) 0%, transparent 55%),
-    radial-gradient(circle at 50% 50%, rgba(180, 83, 130, 0.45) 0%, transparent 60%),
-    linear-gradient(145deg, #4c1d3d 0%, #701a4f 30%, #9a3412 65%, #c2410c 100%);
+    radial-gradient(ellipse at 84% 12%, rgba(255, 255, 255, 0.55) 0%, rgba(232, 238, 246, 0.32) 38%, transparent 68%),
+    radial-gradient(ellipse at 22% 22%, rgba(128, 144, 166, 0.34) 0%, transparent 52%),
+    radial-gradient(circle at 68% 74%, rgba(112, 128, 150, 0.4) 0%, transparent 56%),
+    radial-gradient(ellipse at 8% 86%, rgba(96, 112, 134, 0.42) 0%, transparent 58%),
+    radial-gradient(circle at 46% 52%, rgba(150, 165, 184, 0.26) 0%, transparent 62%),
+    linear-gradient(135deg, #a8b4c4 0%, #c2ccd8 26%, #d4dce6 52%, #b6c2d0 76%, #9fadbe 100%);
 }
 
 /* --- Per-preset ink + popover fills ---------------------------------------
@@ -102,7 +91,7 @@ body {
 .workspace-root[data-tone="light"] {
   --ink: #1a1c22;
   --ink-muted: #383c46;
-  --ink-subtle: #555b68;
+  --ink-subtle: #454a56;
   --ink-shadow: 0 1px 1px rgba(255, 255, 255, 0.5);
   --ink-shadow-muted: 0 1px 1px rgba(255, 255, 255, 0.4);
   --ink-shadow-subtle: 0 1px 1px rgba(255, 255, 255, 0.35);

@@ -102,7 +102,30 @@ The picker has two independent sections. Background and glass style are
 separate state; either can change without touching the other. Defaults are
 Warm Studio + Classic.
 
-**Background — Ambient (5).** The original CSS-gradient presets, unchanged.
+**Background — Ambient (3).** Warm Studio, Smoky Obsidian, Pearl White Marble.
+
+### Milestone 2B: the final seven
+
+Emerald Velvet and Sunset Horizon were removed. Ink switches on a binary
+`data-tone`, so a background has to sit clearly light (mean luminance > ~190)
+or clearly dark (< ~70). Those two sat at 97 and 120 — the dead zone where
+neither ink works — and measured 3.15 and 2.27 contrast on muted text, both
+below WCAG AA. They were also redundant: Emerald Onyx and Amber Aurora cover
+green and warm-orange in the safe dark band.
+
+Revisions applied at the same time:
+
+| Change | Before | After |
+| --- | --- | --- |
+| Pearl White Marble mean luminance | 238 | 203 |
+| Pearl White Marble tonal variation (SD) | 7.6 | 10.9 |
+| Luxury `calm` centre wash | 0.50–0.72 | 0.24–0.30 |
+| Amethyst Bloom base range | #150f1c→#2a1b34 | #0d0913→#33203f |
+| `--ink-subtle` (light tone) | #555b68 | #454a56 |
+
+Marble landed at 203 rather than the ~215 target; it matches Warm Studio (203.5)
+exactly, which keeps the two light presets consistent, and the extra headroom
+went into tonal structure instead.
 
 **Background — Luxury (4).** Champagne Silk, Emerald Onyx, Amethyst Bloom,
 Amber Aurora. These are bundled local SVG artwork in `public/backgrounds/`,

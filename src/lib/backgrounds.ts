@@ -1,8 +1,12 @@
 /**
  * Backgrounds come in two collections:
  *
- * - Ambient: the five CSS-gradient presets from references/code.html.
+ * - Ambient: three CSS-gradient presets derived from references/code.html.
  * - Luxury:  four bundled local SVG artworks in /public/backgrounds.
+ *
+ * Emerald Velvet and Sunset Horizon were removed in Milestone 2B: both sat at
+ * mid luminance, which the binary light/dark ink system cannot serve, and both
+ * failed WCAG AA on muted text.
  *
  * `id` matches the `data-preset` attribute that globals.css keys off.
  */
@@ -11,8 +15,6 @@ export type BackgroundId =
   | "warm"
   | "obsidian"
   | "marble"
-  | "emerald"
-  | "sunset"
   | "champagne-silk"
   | "emerald-onyx"
   | "amethyst-bloom"
@@ -51,26 +53,10 @@ export const BACKGROUNDS: readonly Background[] = [
   {
     id: "marble",
     name: "Pearl White Marble",
-    description: "Bright veined minimal silver",
+    description: "Cool veined silver and slate",
     collection: "Ambient",
     tone: "light",
     swatch: "linear-gradient(135deg, #f1f5f9, #cbd5e1)",
-  },
-  {
-    id: "emerald",
-    name: "Emerald Velvet",
-    description: "Rich jewel forest ambiance",
-    collection: "Ambient",
-    tone: "dark",
-    swatch: "linear-gradient(135deg, #047857, #062820)",
-  },
-  {
-    id: "sunset",
-    name: "Sunset Horizon",
-    description: "Warm rose gold luminance",
-    collection: "Ambient",
-    tone: "dark",
-    swatch: "linear-gradient(135deg, #fb923c, #701a4f)",
   },
   {
     id: "champagne-silk",
@@ -162,20 +148,13 @@ export const AMBIENT_ORBS: Record<BackgroundId, readonly AmbientOrb[]> = {
     { className: "-bottom-[12%] left-[22%] w-[880px] h-[480px]", color: "rgba(30, 41, 59, 0.4)", blur: "120px" },
     { className: "top-[22%] left-[6%] w-[480px] h-[680px]", color: "rgba(15, 23, 42, 0.5)", blur: "110px" },
   ],
+  // 2B: white orbs dialled back and the slate orb strengthened, so the preset
+  // keeps its airy feel without washing out to near-white.
   marble: [
-    { className: "top-[5%] right-[10%] w-[580px] h-[580px]", color: "rgba(255, 255, 255, 0.6)", blur: "100px" },
-    { className: "-bottom-[12%] left-[22%] w-[880px] h-[480px]", color: "rgba(226, 232, 240, 0.6)", blur: "110px" },
-    { className: "top-[22%] left-[6%] w-[480px] h-[680px]", color: "rgba(148, 163, 184, 0.3)", blur: "120px" },
-  ],
-  emerald: [
-    { className: "top-[5%] right-[10%] w-[580px] h-[580px]", color: "rgba(16, 185, 129, 0.25)", blur: "110px" },
-    { className: "-bottom-[12%] left-[22%] w-[880px] h-[480px]", color: "rgba(4, 120, 87, 0.3)", blur: "120px" },
-    { className: "top-[22%] left-[6%] w-[480px] h-[680px]", color: "rgba(2, 44, 34, 0.5)", blur: "110px" },
-  ],
-  sunset: [
-    { className: "top-[5%] right-[10%] w-[580px] h-[580px]", color: "rgba(251, 146, 60, 0.4)", blur: "100px" },
-    { className: "-bottom-[12%] left-[22%] w-[880px] h-[480px]", color: "rgba(244, 63, 94, 0.35)", blur: "120px" },
-    { className: "top-[22%] left-[6%] w-[480px] h-[680px]", color: "rgba(112, 26, 79, 0.4)", blur: "110px" },
+    { className: "top-[5%] right-[10%] w-[580px] h-[580px]", color: "rgba(255, 255, 255, 0.3)", blur: "100px" },
+    { className: "-bottom-[12%] left-[22%] w-[880px] h-[480px]", color: "rgba(214, 223, 234, 0.34)", blur: "110px" },
+    { className: "top-[22%] left-[6%] w-[480px] h-[680px]", color: "rgba(126, 142, 164, 0.42)", blur: "120px" },
+    { className: "bottom-[18%] right-[16%] w-[420px] h-[420px]", color: "rgba(140, 156, 176, 0.32)", blur: "95px" },
   ],
   "champagne-silk": [],
   "emerald-onyx": [],

@@ -37,8 +37,8 @@
       <stop offset="100%" stop-color="#d9c48f" stop-opacity="0"/>
     </radialGradient>
     <radialGradient id="eo-calm" cx="0.5" cy="0.52" r="0.46">
-      <stop offset="0%" stop-color="#050a09" stop-opacity="0.5"/>
-      <stop offset="70%" stop-color="#050a09" stop-opacity="0.22"/>
+      <stop offset="0%" stop-color="#050a09" stop-opacity="0.26"/>
+      <stop offset="70%" stop-color="#050a09" stop-opacity="0.1"/>
       <stop offset="100%" stop-color="#050a09" stop-opacity="0"/>
     </radialGradient>
 
