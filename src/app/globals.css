@@ -115,6 +115,11 @@ body {
      the text itself. */
   --diffusion-fill: rgba(255, 255, 255, 0.05);
   --glint-color: rgba(255, 255, 255, 0.32);
+  /* Assistant sheet. Well under the user bubble's 0.12 fill / 0.7 border, so
+     the answer reads as an open surface and the user message stays the more
+     solid object of the two. */
+  --sheet-fill: rgba(255, 255, 255, 0.07);
+  --sheet-line: rgba(255, 255, 255, 0.3);
 }
 
 .workspace-root[data-tone="dark"] {
@@ -138,6 +143,8 @@ body {
   --modal-border: rgba(255, 255, 255, 0.5);
   --diffusion-fill: rgba(8, 10, 14, 0.13);
   --glint-color: rgba(255, 255, 255, 0.42);
+  --sheet-fill: rgba(255, 255, 255, 0.045);
+  --sheet-line: rgba(255, 255, 255, 0.14);
 }
 
 /* --- Ink helpers --------------------------------------------------------- */
@@ -562,14 +569,199 @@ body {
 }
 
 /* --- Message motion, indicator, provider identity -------------------------
-   Milestone 3C-A / 4B. All CSS: no animation library is pulled in for what is
-   a fade and a few pixels of travel.
+   Milestone 3C-A / 4B / 6. All CSS: no animation library is pulled in for a
+   fade, a few pixels of travel and one masked glint.
+
+   Milestone 6 retune. The previous entrance was
+   `translateY(8px)` over `240ms cubic-bezier(0.16, 1, 0.3, 1)`. The class was
+   applied correctly -- that was verified in the browser before any value was
+   touched -- but the curve is an expo-out, which front-loads almost all of its
+   progress. Sampled per frame from t=0 it measured:
+
+       +30ms  opacity 0.615   8px -> 3.08px   (62% of the travel done)
+       +61ms  opacity 0.855         1.16px    (85% done)
+       +98ms  opacity 0.946         0.43px
+       +161ms opacity 0.995         0.04px
+
+   so the declared 240ms spent its last ~140ms moving the row under 1.2px --
+   below the perceptual threshold. The effective motion was ~100ms over 8px
+   with no scale and no blur, which reads as a pop, not an arrival. The curve
+   below is a gentler ease-out that keeps travel legible across most of the
+   duration, over a longer distance, with scale and a small blur to carry it.
 -------------------------------------------------------------------------- */
 
-@keyframes msg-enter {
+/* Shared entrance curve. Chosen by measuring candidates against the real
+   bubble rather than by eye -- vertical travel remaining, in px, seeking the
+   live animation at fixed times:
+
+     old expo (0.16,1,0.3,1)   12 | 3.85 | 0.78 | -0.36   <- spent by 80ms
+     cb(0.22,0.68,0.24,1)      12 | 6.23 | 2.40 |  0.60
+     cb(0.40,0.50,0.28,1)      12 | 9.26 | 5.52 |  2.12   <- chosen
+                               0ms  40ms   80ms   120ms
+
+   The chosen curve is still an ease-out, but it keeps real travel on screen
+   across the whole 360ms instead of finishing in the first eighth of it. */
+.workspace-root {
+  --enter-curve: cubic-bezier(0.4, 0.5, 0.28, 1);
+}
+
+/* --- User message: liquid glass entrance ---------------------------------- */
+
+@keyframes user-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.965);
+    filter: blur(3px);
+  }
+  60% {
+    opacity: 1;
+  }
+  78% {
+    /* Restrained overshoot -- one pixel past the mark, no bounce back. */
+    transform: translateY(-1px) scale(1.003);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+/* `backwards`, never `forwards`: the 100% keyframe is the element's resting
+   style, so letting the fill lapse returns it to the stylesheet exactly. That
+   matters here -- a retained `filter: blur(0)` would leave a permanent
+   stacking context on a .glass-btn and change how its backdrop-filter renders,
+   i.e. it would quietly alter the approved glass. */
+.user-enter {
+  animation: user-enter 360ms var(--enter-curve) backwards;
+  transform-origin: 100% 50%;
+}
+
+/* One-shot glint along the upper rim only. A child element, not ::before or
+   ::after -- Clear Glass already uses both pseudo-elements on .glass-btn for
+   the edge ring and inner rim. Masked to the top of the bubble so it is a rim
+   highlight, not a glow over the text, and it never touches the background. */
+@keyframes rim-sweep {
+  0% {
+    background-position: 170% 0;
+    opacity: 0;
+  }
+  22% {
+    opacity: 1;
+  }
+  100% {
+    background-position: -40% 0;
+    opacity: 0;
+  }
+}
+
+.rim-sweep {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background-image: linear-gradient(
+    102deg,
+    rgba(255, 255, 255, 0) 42%,
+    rgba(255, 255, 255, 0.5) 50%,
+    rgba(255, 255, 255, 0) 58%
+  );
+  background-size: 240% 100%;
+  background-repeat: no-repeat;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 22%,
+    transparent 52%
+  );
+  mask-image: linear-gradient(to bottom, #000 0%, #000 22%, transparent 52%);
+  animation: rim-sweep 620ms cubic-bezier(0.36, 0, 0.2, 1) 70ms 1 both;
+}
+
+/* --- Assistant arrival: avatar first, then the sheet ---------------------- */
+
+@keyframes avatar-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes surface-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.assistant-enter .provider-avatar {
+  animation: avatar-pop 300ms var(--enter-curve) backwards;
+}
+
+/* Delayed behind the avatar so the identity lands first and the answer
+   follows it, rather than both appearing at once. */
+.assistant-enter .assistant-surface {
+  animation: surface-enter 390ms var(--enter-curve) 120ms backwards;
+  transform-origin: 0% 0%;
+}
+
+/* Open glass sheet. Deliberately not a bubble: asymmetric radius with the
+   corner nearest the avatar cut back, a fill well below the user bubble's
+   0.12, a hairline edge, and no drop shadow. */
+/* Clear Glass thins every surface: its .glass-btn fill drops from 0.12 to
+   0.055. The sheet has to drop with it, or the answer ends up heavier than the
+   user bubble -- which is the wrong way round and was caught by the suite. */
+.workspace-root[data-glass="ultra"][data-tone="light"] {
+  --sheet-fill: rgba(255, 255, 255, 0.034);
+  --sheet-line: rgba(255, 255, 255, 0.1);
+}
+.workspace-root[data-glass="ultra"][data-tone="dark"] {
+  --sheet-fill: rgba(255, 255, 255, 0.03);
+  --sheet-line: rgba(255, 255, 255, 0.085);
+}
+
+.assistant-surface {
+  position: relative;
+  border-radius: 6px 16px 16px 16px;
+  padding: 0.6rem 0.85rem;
+  background: var(--sheet-fill);
+  border: 1px solid var(--sheet-line);
+  backdrop-filter: blur(6px) saturate(112%);
+  -webkit-backdrop-filter: blur(6px) saturate(112%);
+}
+
+/* Small localised corner highlight in the provider accent -- the identity cue
+   asked for in R4, kept to one corner so it never becomes a glow. */
+.assistant-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    36px 36px at 0% 0%,
+    color-mix(in srgb, var(--accent) 24%, transparent) 0%,
+    transparent 72%
+  );
+}
+
+/* --- Typing indicator ----------------------------------------------------- */
+
+@keyframes indicator-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -577,40 +769,45 @@ body {
   }
 }
 
-/* Applied only to rows appended after mount (see the baseline set in
-   MessageList), so a restored history does not replay on load. */
-.msg-enter {
-  animation: msg-enter 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+.typing-row {
+  animation: indicator-in 260ms var(--enter-curve) backwards;
 }
 
 @keyframes typing-dot {
-  0%, 60%, 100% {
-    opacity: 0.25;
-    transform: translateY(0);
+  0%,
+  64%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0) scale(0.92);
   }
-  30% {
-    opacity: 0.9;
-    transform: translateY(-2px);
+  32% {
+    opacity: 1;
+    transform: translateY(-4px) scale(1);
   }
 }
 
 .typing-dots {
   display: inline-flex;
-  gap: 3px;
+  gap: 5px;
   align-items: center;
 }
+/* Small glass beads rather than flat dots: accent-tinted fill with a lit top
+   edge, so they read as part of the same material as the panels. */
 .typing-dots i {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
   border-radius: 9999px;
-  background: var(--accent, var(--ink));
-  animation: typing-dot 1.25s ease-in-out infinite;
+  background: color-mix(in srgb, var(--accent) 65%, rgba(255, 255, 255, 0.7));
+  box-shadow:
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.75),
+    0 1px 2px -1px rgba(0, 0, 0, 0.25);
+  animation: typing-dot 1.4s ease-in-out infinite;
 }
 .typing-dots i:nth-child(2) {
-  animation-delay: 0.16s;
+  animation-delay: 0.18s;
 }
 .typing-dots i:nth-child(3) {
-  animation-delay: 0.32s;
+  animation-delay: 0.36s;
 }
 
 /* Streaming caret. Steady, not blinking: a blink next to arriving text reads
@@ -687,12 +884,32 @@ body {
   margin-bottom: 0;
 }
 
+/* Everything above replaced by a short opacity transition: no transform, no
+   blur, no sweep. The rows still arrive, they just do not travel. */
+@keyframes rm-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .msg-enter {
-    animation: none;
+  .user-enter,
+  .typing-row,
+  .assistant-enter .provider-avatar,
+  .assistant-enter .assistant-surface {
+    animation: rm-fade 140ms ease-out backwards;
+    transform: none;
+    filter: none;
+  }
+  .rim-sweep {
+    display: none;
   }
   .typing-dots i {
     animation: none;
     opacity: 0.6;
+    transform: none;
   }
 }

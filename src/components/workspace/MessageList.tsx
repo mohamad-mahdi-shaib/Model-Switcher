@@ -40,9 +40,17 @@ const STARTERS = [
 
 function UserBubble({ content, fresh }: { content: string; fresh: boolean }) {
   return (
-    <div className={`flex justify-end pt-2 ${fresh ? "msg-enter" : ""}`}>
-      {/* whitespace-pre-wrap renders newlines without dangerouslySetInnerHTML. */}
-      <div className="glass-btn max-w-md rounded-[22px] border border-white/80 px-5 py-2.5 text-[13px] leading-snug font-medium tracking-tight break-words whitespace-pre-wrap glass-text-dark">
+    <div className="flex justify-end pt-2">
+      {/* The entrance sits on the bubble, not the row: scale and blur have to
+          act on the object itself, and the rim sweep needs the bubble's own
+          border-radius. whitespace-pre-wrap renders newlines without
+          dangerouslySetInnerHTML. */}
+      <div
+        className={`glass-btn relative max-w-md rounded-[22px] border border-white/80 px-5 py-2.5 text-[13px] leading-snug font-medium tracking-tight break-words whitespace-pre-wrap glass-text-dark ${
+          fresh ? "user-enter" : ""
+        }`}
+      >
+        {fresh ? <span aria-hidden="true" className="rim-sweep" /> : null}
         {content}
       </div>
     </div>
@@ -85,18 +93,27 @@ function AssistantMessage({
 }) {
   const interrupted = message.state === "interrupted";
   return (
-    <div className={`group/msg flex items-start gap-3.5 pt-1 ${fresh ? "msg-enter" : ""}`}>
+    // The class is on the row and the row is keyed by message id, so the
+    // animation runs once on insertion. Streamed tokens re-render the contents
+    // of a node that already exists; they neither restart nor re-trigger it.
+    <div
+      className={`group/msg flex items-start gap-3.5 pt-1 ${
+        fresh ? "assistant-enter" : ""
+      }`}
+    >
       <span className="provider-avatar mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/15 shadow-sm backdrop-blur-md">
         <BotIcon className="h-3.5 w-3.5 glass-text-dark" />
       </span>
-      <div className="min-w-0 max-w-[680px] text-[12.5px] leading-relaxed">
-        {/* Model output goes through the Markdown AST renderer: React elements
-            only, never an HTML string. */}
-        <Markdown text={message.content} />
-        {streaming ? <span aria-hidden="true" className="stream-caret" /> : null}
-        {interrupted ? (
-          <p className="mt-1 text-[10.5px] glass-text-subtle">Response interrupted.</p>
-        ) : null}
+      <div className="min-w-0 max-w-[680px]">
+        <div className="assistant-surface text-[12.5px] leading-relaxed">
+          {/* Model output goes through the Markdown AST renderer: React
+              elements only, never an HTML string. */}
+          <Markdown text={message.content} />
+          {streaming ? <span aria-hidden="true" className="stream-caret" /> : null}
+          {interrupted ? (
+            <p className="mt-1 text-[10.5px] glass-text-subtle">Response interrupted.</p>
+          ) : null}
+        </div>
         {!streaming && message.content ? <CopyResponse text={message.content} /> : null}
       </div>
     </div>
@@ -168,7 +185,10 @@ GEMINI_API_KEY=your-key-here
 function TypingIndicator({ provider }: { provider: ProviderId }) {
   const label = `${getProviderMeta(provider).label} is responding`;
   return (
-    <div className="flex items-center gap-3.5 pt-1">
+    // The avatar sits at the same offset as the assistant row's, so when the
+    // first token swaps this for the answer the identity stays put and only
+    // the sheet arrives -- the two are never on screen together.
+    <div className="typing-row flex items-center gap-3.5 pt-1">
       <span className="provider-avatar flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/15 backdrop-blur-md">
         <BotIcon className="h-3.5 w-3.5 glass-text-dark" />
       </span>

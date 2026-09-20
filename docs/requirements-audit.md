@@ -35,22 +35,32 @@
 
 ### R2 — Message entrance motion
 - **PDF:** §2 "Fluid Motion" — "**Think about how messages appear. Do they slide? Do they fade?**"
-- **Status: Complete** *(was Missing)*
-- **Code:** `globals.css` `@keyframes msg-enter` (fade + 8px rise, 240ms); `MessageList.tsx` baseline set + `key={activeId}` in `WorkspaceLayout.tsx:138`.
-- **Does:** Rows appended after mount animate once. A restored history does not animate, because ids present at mount are excluded.
-- **Evidence:** [MOCKED] new row `animationName = "msg-enter"`; after a hard refresh `{restoredRows: 11, animated: 0}`; a message sent after restore `{animated: 2, name: "msg-enter"}`.
+- **Status: Complete** *(was Missing, then Complete-but-imperceptible — retuned in milestone 6)*
+- **Code:** `globals.css` `@keyframes user-enter` / `rim-sweep` / `avatar-pop` / `surface-enter`; `MessageList.tsx` baseline set + `key={activeId}` in `WorkspaceLayout.tsx`.
+- **Does:** A sent user message arrives as glass: opacity 0→1, 12px rise, scale 0.965→1 and a 3px blur clearing, over 360ms on `cubic-bezier(0.4, 0.5, 0.28, 1)`, with a 1px overshoot that settles without bouncing, plus a single masked highlight sweep across the upper rim. The assistant arrives separately — avatar first (fade + 0.85→1 scale, 300ms), then the response sheet 120ms behind it (opacity 0, +10px, 0.985→1, 390ms). Rows appended after mount animate once; a restored history does not, because ids present at mount are excluded.
+- **Evidence:**
+  - [MOCKED] **Why the previous version was not perceptible**, measured by pausing the live animation and seeking it to fixed times. The old `240ms cubic-bezier(0.16, 1, 0.3, 1)` is an expo-out and front-loads its progress — vertical travel remaining was `12px → 3.85 → 0.78 → −0.36` at `0 / 40 / 80 / 120ms`, i.e. spent inside ~80ms, with the declared remainder moving the row under 1.2px. The class itself was correctly applied the whole time; the curve and distance were the defect.
+  - [MOCKED] After the retune, the same measurement gives `12px → 9.26 → 5.52 → 2.12 → 0.33` at `0 / 40 / 80 / 120 / 160ms`, opacity `0 → 0.29 → 0.67 → 0.89`, blur `3 → 2.37 → 1.50 → 0.72px`, then a −1px overshoot peaking at 280ms and resting at 360ms. Motion is present in **9 of 9** sampled intervals.
+  - [MOCKED] Assistant arrival seeked from t=0: avatar `opacity 0, scale 0.85` → `1.0` at 300ms; sheet `opacity 0, y 10px, scale 0.985`, still held at t=120 by its delay, reaching `0.96 / 0.43px` at 390ms.
+  - [MOCKED] Streaming: text grew 49→99 chars while `animationstart` events stayed at **8→8**; each entrance fired exactly once (`user-enter 1, rim-sweep 1, avatar-pop 1, surface-enter 1`).
+  - [MOCKED] Switching conversations and a hard refresh both report `{running: [], enterClasses: 0, sweeps: 0}`; a message sent after restore still animates.
+  - [MOCKED] Reduced motion: `animationName = "rm-fade"`, `transform: none`, `filter: none`, sweep `display: none`.
 - **Gap:** None.
-- **Test:** Send a message → it animates. Refresh → nothing animates. Send again → it animates.
-- **Note:** A first attempt gated this with a class added shortly after mount. That was wrong — adding the class later starts the animation on *every* restored row at once. Caught by the suite and replaced.
+- **Test:** Send a message → the bubble rises, scales and de-blurs with one glint along its top rim. Refresh → nothing animates. Send again → it animates.
+- **Note:** Two earlier mistakes, both caught by measurement rather than by eye. First, a class added shortly after mount started the animation on *every* restored row at once. Second, the replacement curve was assumed to be visible because its declared duration was 240ms; seeking it proved the motion was over in 80ms. Curve selection is now backed by the comparison table recorded in `globals.css`.
 
 ### R3 — Typing / responding indicator
 - **PDF:** §2 — "**How does the 'typing indicator' look?**"
-- **Status: Complete** *(was Partial — static text)*
-- **Code:** `MessageList.tsx` `TypingIndicator`; `globals.css` `@keyframes typing-dot`, `.typing-dots`.
-- **Does:** Three dots pulsing on a staggered delay, tinted by the provider accent, beside a `role="status"` label. Replaced by the reply on the first token. Static under `prefers-reduced-motion`.
-- **Evidence:** [MOCKED] `{dots: true, anim: "typing-dot", label: "Gemini is responding"}`.
+- **Status: Complete** *(was Partial — static text; dots refined in milestone 6)*
+- **Code:** `MessageList.tsx` `TypingIndicator`; `globals.css` `@keyframes typing-dot`, `.typing-dots`, `.typing-row`.
+- **Does:** Three 6px glass beads — accent-tinted fill with a lit top edge, rather than flat dots — travelling 4px vertically and pulsing `0.3 → 1.0` on a 1.4s cycle staggered by 0.18s, beside a `role="status"` label. The whole row fades in on `indicator-in` so it does not pop. The avatar sits at the same offset as the assistant row's, so the first token swaps the dots for the answer without the identity moving. Static under `prefers-reduced-motion`.
+- **Evidence:**
+  - [MOCKED] `{count: 3, anim: "typing-dot", dur: "1.4s", size: "6px", delays: ["0s", "0.18s", "0.36s"]}`, label `"Gemini is responding"`.
+  - [MOCKED] Seeked dot curve: `opacity 0.30 / y 0px` at 0ms → `0.84 / −3.09px` at 300ms → `1.00 / −4px` at 450ms → back to `0.30 / 0px` by 900ms.
+  - [MOCKED] The indicator and the answer are never both on screen: with the first token delayed to 2.5s, `assistantSurface = false` while the dots run, and `typingGone = true` the moment the sheet exists.
+  - [MOCKED] Reduced motion: dot `animationName = "none"`.
 - **Gap:** None.
-- **Test:** Send a message; before the first token, animated dots and the text "Gemini is responding" appear.
+- **Test:** Send a message; before the first token, three moving beads and the text "Gemini is responding" appear, and they vanish as the answer lands.
 
 ### R4 — Subtle visual identity per model
 - **PDF:** §2 "Model Identity" — "**Can you make the UI change subtly when I switch between GPT-4 and Gemini?** (e.g., a color shift or a different glow)."
@@ -63,12 +73,20 @@
 
 ### R5 — User vs AI distinction beyond alignment
 - **PDF:** §5.1 — "**more than just alignment. Use icons, distinct shapes, or unique typography.**"
-- **Status: Complete**
-- **Code:** `MessageList.tsx` `UserBubble` vs `AssistantMessage`.
-- **Does:** Shape (user: `rounded-[22px]` glass capsule; AI: no container), icon (AI has an accented avatar; user none), typography (user `font-medium` 13px; AI muted 12.5px with rich Markdown).
-- **Evidence:** [MOCKED] `{userShape: true, aiIcon: true}`.
+- **Status: Complete** *(surface treatment added in milestone 6)*
+- **Code:** `MessageList.tsx` `UserBubble` vs `AssistantMessage`; `globals.css` `.assistant-surface`.
+- **Does:** Differs on four axes, not two.
+  - **Shape** — user is a `rounded-[22px]` capsule; the answer is an open sheet with an asymmetric `6px 16px 16px 16px` radius, the corner nearest the avatar cut back.
+  - **Icon** — the answer carries an accented provider avatar; the user message carries none.
+  - **Surface** — the sheet is deliberately lighter than the user bubble in every glass style, carries a hairline edge and a small provider-accented corner highlight, and has **no drop shadow**, so it reads as an open surface rather than an opaque bubble.
+  - **Typography** — user `font-medium` 13px; answer muted 12.5px with rich Markdown.
+- **Evidence:**
+  - [MOCKED] Glowy Glass: sheet `rgba(255,255,255,0.07)` vs bubble `rgba(255,255,255,0.12)`; radius `6px 16px 16px` vs `22px`; `boxShadow: none`.
+  - [MOCKED] Clear Glass, where every surface thins: sheet `0.035` vs bubble `0.055` (light) and `0.03` vs `0.055` (dark). The sheet was initially heavier than the bubble in Clear Glass — the suite caught it and glass-specific tokens were added.
+  - [MOCKED] All four combinations driven through the real appearance picker at 1366×768: Glowy/Clear × Warm Studio/Smoky Obsidian. Screenshots `look-*.png`.
+  - [MOCKED] Shared glass panel compared before and after a message exists in each combination: background, shadow, radius, border, backdrop-filter and box all byte-identical. No residual `filter` is left on a settled bubble (`filter: none`), which is why the entrance uses `backwards` fill rather than `forwards`.
 - **Gap:** None.
-- **Test:** Ignore alignment; the two must differ in ≥2 of {shape, icon, typography}.
+- **Test:** Ignore alignment; the two must differ in ≥2 of {shape, icon, surface, typography} — they differ in all four.
 
 ### R6 — Prominent, stylish model selector
 - **PDF:** §5.1 — "**A prominent, stylish selector.**"
@@ -179,9 +197,9 @@
 | --- | --- | --- | --- |
 | 1 | Glass intact, both styles | ✅ | [MOCKED] both named styles in picker |
 | 2 | Seven backgrounds present | ✅ | [MOCKED] 9 picker options = 7 + 2 |
-| 3 | New messages animate once; restored do not | ✅ | [MOCKED] `{restoredRows:11, animated:0}`; new → `msg-enter` |
-| 4 | Typing indicator animates + accessible text | ✅ | [MOCKED] `anim:"typing-dot"`, `"Gemini is responding"` |
-| 5 | User/AI distinct beyond alignment | ✅ | [MOCKED] shape + icon |
+| 3 | New messages animate once; restored do not | ✅ | [MOCKED] `animationstart` 8→8 across a stream; each entrance fires exactly once; switch + hard refresh both `{running:[], enterClasses:0}` |
+| 4 | Typing indicator animates + accessible text | ✅ | [MOCKED] 3 beads, `anim:"typing-dot"` 1.4s staggered 0.18s, `"Gemini is responding"`; never shown with the answer |
+| 5 | User/AI distinct beyond alignment | ✅ | [MOCKED] shape + icon + surface + typography; sheet lighter than bubble in all 4 glass×background combinations |
 | 6 | Welcome personality + working starters | ✅ | [MOCKED] 3 prompts fill composer, send nothing |
 | 7 | Three conversations survive hard refresh | ✅ | [MOCKED] all three + active restored |
 | 8 | ≥3 earlier messages in the selected conversation | ✅ | [MOCKED] 7 messages, no sibling content |
