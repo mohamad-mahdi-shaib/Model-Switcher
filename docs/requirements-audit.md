@@ -36,14 +36,14 @@
 ### R2 — Message entrance motion
 - **PDF:** §2 "Fluid Motion" — "**Think about how messages appear. Do they slide? Do they fade?**"
 - **Status: Complete** *(was Missing, then Complete-but-imperceptible — retuned in milestone 6)*
-- **Code:** `globals.css` `@keyframes user-enter` / `reveal-streak` / `avatar-pop` / `surface-enter`; `MessageList.tsx` baseline set + `key={activeId}` in `WorkspaceLayout.tsx`.
-- **Does:** A sent user message resolves into the panel: opacity 0→1, 18px rise, scale 0.975→1 and a 4px blur clearing, over 520ms on `cubic-bezier(0.22, 0.72, 0.22, 1)`, with no overshoot of any kind. One thin specular streak crosses the sent row once, right to left, over 820ms after a 150ms delay, and leaves nothing behind. The assistant arrives separately — avatar first (fade + 0.85→1 scale, 300ms), then the response sheet 140ms behind it (opacity 0, +16px, 0.985→1, 3px blur, 550ms). Rows appended after mount animate once; a restored history does not, because ids present at mount are excluded.
+- **Code:** `globals.css` `@keyframes user-enter` / `reveal-streak` / `avatar-in` / `surface-in` / `content-in`; `MessageList.tsx` baseline set + `key={activeId}` in `WorkspaceLayout.tsx`.
+- **Does:** A sent user message resolves into the panel: opacity 0→1, 18px rise, scale 0.975→1 and a 4px blur clearing, over 700ms on `cubic-bezier(0.5, 0.35, 0.25, 1)`, with no overshoot of any kind. One thin specular streak crosses the sent row once, right to left, over 1000ms after a 200ms delay, and leaves nothing behind. The assistant arrives in three soft stages: avatar (8px, 0.92→1, 2px blur, 520ms), the glass pane 180ms behind it (12px, 0.992→1, 2px blur, 740ms), and the answer itself 350ms behind it (6px, 1.5px blur, 650ms). Rows appended after mount animate once; a restored history does not, because ids present at mount are excluded.
 - **Evidence:**
   - [MOCKED] **Why the previous version was not perceptible**, measured by pausing the live animation and seeking it to fixed times. The old `240ms cubic-bezier(0.16, 1, 0.3, 1)` is an expo-out and front-loads its progress — vertical travel remaining was `12px → 3.85 → 0.78 → −0.36` at `0 / 40 / 80 / 120ms`, i.e. spent inside ~80ms, with the declared remainder moving the row under 1.2px. The class itself was correctly applied the whole time; the curve and distance were the defect.
-  - [MOCKED] The current 520ms entrance measures `18px → 11.05 → 5.18 → 2.46 → 1.29 → 0.19 → 0` at `0 / 60 / 130 / 200 / 260 / 400 / 520ms`, opacity `0 → 0.39 → 0.71 → 0.86`, blur `4 → 2.46 → 1.15 → 0.55px`. It never passes its resting position (`minY = 0`, `maxScale = 1`), so there is no bounce or spring.
+  - [MOCKED] The 700ms entrance measures `18px → 15.69 → 11.68 → 5.79 → 2.30 → 0.80 → 0` at `0 / 100 / 200 / 300 / 400 / 500 / 700ms`, opacity `0 → 0.13 → 0.35 → 0.68 → 0.87`, blur `4 → 3.49 → 2.59 → 1.29 → 0.51px`. Lengthening the duration alone would not have been enough: on the previous curve 89% of the travel was over by 300ms, so the message sat still for the rest. This curve still has a third of its travel left at 300ms. It never passes its resting position (`minY = 0`, `maxScale = 1`), so there is no bounce or spring.
   - [MOCKED] Assistant arrival seeked from t=0: avatar `opacity 0, scale 0.85` → `1.0` by 320ms; sheet `opacity 0, y 16px, scale 0.985, blur 3px`, still held at t=80 by its 140ms delay, at rest by 690ms, `minY = 0`.
   - [MOCKED] Specular streak: `iterationCount 1`, 820ms after a 150ms delay, 42.3% of the message width, 2.5px tall, `pointer-events: none`, `aria-hidden="true"`. Opacity across its active phase `0 → 1.00 → 1.00 → 0.40 → 0.04 → 0` while travelling `x 23.3px → −109.3px`: right to left, fully gone at the end, no permanent line.
-  - [MOCKED] Streaming: text grew 49→99 chars while `animationstart` events stayed at **8→8**; each entrance fired exactly once (`user-enter 1, reveal-streak 1, avatar-pop 1, surface-enter 1`).
+  - [MOCKED] Streaming: text grew 41→99 chars while `animationstart` events stayed at **10→10**; each entrance fired exactly once (`user-enter 1, reveal-streak 1, avatar-in 1, surface-in 1, content-in 1`).
   - [MOCKED] Switching conversations and a hard refresh both report `{running: [], enterClasses: 0, sweeps: 0}`; a message sent after restore still animates.
   - [MOCKED] Reduced motion: `animationName = "rm-fade"`, `transform: none`, `filter: none`, sweep `display: none`.
 - **Gap:** None.
@@ -58,7 +58,7 @@
 - **Evidence:**
   - [MOCKED] `{count: 3, anim: "typing-dot", dur: "1.4s", size: "6px", delays: ["0s", "0.18s", "0.36s"]}`, label `"Gemini is responding"`.
   - [MOCKED] Seeked dot curve: `opacity 0.30 / y 0px` at 0ms → `0.84 / −3.09px` at 300ms → `1.00 / −4px` at 450ms → back to `0.30 / 0px` by 900ms.
-  - [MOCKED] The indicator and the answer are never both on screen: with the first token delayed to 2.5s, `assistantSurface = false` while the dots run, and `typingGone = true` the moment the sheet exists.
+  - [MOCKED] The beads now hand over to the answer rather than vanishing: on the first token the slot plays a 220ms fade while its grid row collapses `1fr → 0fr`, measured `opacity 1 → 0, height 32px → 0px`, with the assistant row's top shifting **0.0px** across the whole handoff.
   - [MOCKED] Reduced motion: dot `animationName = "none"`.
 - **Gap:** None.
 - **Test:** Send a message; before the first token, three moving beads and the text "Gemini is responding" appear, and they vanish as the answer lands.
@@ -79,11 +79,12 @@
 - **Does:** Differs on four axes, not two.
   - **Shape** — the user message has no container at all: it reads directly on the main glass panel, right-aligned on a capped measure. The answer is an open sheet with an asymmetric `6px 16px 16px 16px` radius, the corner nearest the avatar cut back.
   - **Icon** — the answer carries an accented provider avatar; the user message carries none.
-  - **Surface** — the answer is the only message carrying a surface; it keeps a hairline edge and a small provider-accented corner highlight, and has **no drop shadow**. The user message has no fill, border, radius, shadow or backdrop-filter, so the approved panel is never doubled up with a second glass box.
+  - **Surface** — the answer is the only message carrying a surface, and it is an outline rather than a card: no fill, no backdrop-filter and no shadow, just a graded 1px ring (lit top-left, soft sides, darker lower-right) with two short specular hits, one of them provider-accented. The user message has no surface at all, so the approved panel is never doubled up with a second glass box.
   - **Typography** — user 13.5px at weight 600, with a sent row beneath it (`<time>` plus a labelled delivery mark); answer muted 12.5px with rich Markdown.
 - **Evidence:**
   - [MOCKED] Every element of the user message reports `backgroundColor: rgba(0,0,0,0)`, `backgroundImage: none`, `boxShadow: none`, `backdropFilter: none`, `border-width: 0px` and `border-radius: 0px`, and both `::before` and `::after` resolve to `content: none` — so Clear Glass's edge ring and inner rim, which attach to `.glass-btn`, went with it. No `.glass-btn` remains anywhere in the transcript.
   - [MOCKED] Identity without a box: `text-align: right`, `font-weight: 600`, measure capped at 500.25px, and a sent row reading e.g. `05:54` with `datetime="2026-09-20T02:54:45.932Z"` plus a screen-reader-only “Sent”.
+  - [MOCKED] The assistant pane adds nothing to its own centre. Capturing the pane, then removing only its `background` and edge ring and capturing again, the interior mean luminance moves by **0.00 / 0.32 / 0.00 / 0.00** across Glowy×Clear and Warm Studio×Smoky Obsidian, while the same toggle moves the edge band by 2.4–4.7 — so the centre is measurably transparent and the measurement is not a no-op. Edge brightness is deliberately uneven: brightest top-left vs lower-right reads `249 vs 173`, `242 vs 170`, `218 vs 105`, `202 vs 100`.
   - [MOCKED] All four combinations driven through the real appearance picker at 1366×768: Glowy/Clear × Warm Studio/Smoky Obsidian. Screenshots `look-*.png`.
   - [MOCKED] Shared glass panel compared before and after a message exists in each combination: background, shadow, radius, border, backdrop-filter and box all byte-identical. No residual `filter` is left on a settled bubble (`filter: none`), which is why the entrance uses `backwards` fill rather than `forwards`.
 - **Gap:** None.
@@ -200,7 +201,7 @@
 | 2 | Seven backgrounds present | ✅ | [MOCKED] 9 picker options = 7 + 2 |
 | 3 | New messages animate once; restored do not | ✅ | [MOCKED] `animationstart` 8→8 across a stream; each entrance fires exactly once; switch + hard refresh both `{running:[], enterEls:0, streaks:0}` |
 | 4 | Typing indicator animates + accessible text | ✅ | [MOCKED] 3 beads, `anim:"typing-dot"` 1.4s staggered 0.18s, `"Gemini is responding"`; never shown with the answer |
-| 5 | User/AI distinct beyond alignment | ✅ | [MOCKED] user message has no fill/border/radius/shadow/backdrop and no glass pseudo-elements; distinct by alignment, measure, weight 600 and a sent row |
+| 5 | User/AI distinct beyond alignment | ✅ | [MOCKED] neither message is a card: user has no surface, assistant is a graded 1px ring with a measured centre contribution of 0.00–0.32 luminance; distinct by alignment, measure, weight 600, avatar and a sent row |
 | 6 | Welcome personality + working starters | ✅ | [MOCKED] 3 prompts fill composer, send nothing |
 | 7 | Three conversations survive hard refresh | ✅ | [MOCKED] all three + active restored |
 | 8 | ≥3 earlier messages in the selected conversation | ✅ | [MOCKED] 7 messages, no sibling content |

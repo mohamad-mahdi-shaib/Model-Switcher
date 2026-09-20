@@ -127,13 +127,19 @@ function AssistantMessage({
       </span>
       <div className="min-w-0 max-w-[680px]">
         <div className="assistant-surface text-[12.5px] leading-relaxed">
-          {/* Model output goes through the Markdown AST renderer: React
-              elements only, never an HTML string. */}
-          <Markdown text={message.content} />
-          {streaming ? <span aria-hidden="true" className="stream-caret" /> : null}
-          {interrupted ? (
-            <p className="mt-1 text-[10.5px] glass-text-subtle">Response interrupted.</p>
-          ) : null}
+          {/* Stage C reveals this container once, 350ms behind the avatar.
+              Streamed tokens land inside a node that already exists, so text
+              keeps arriving through the reveal without restarting it and
+              without each chunk fading in on its own. */}
+          <div className="assistant-content">
+            {/* Model output goes through the Markdown AST renderer: React
+                elements only, never an HTML string. */}
+            <Markdown text={message.content} />
+            {streaming ? <span aria-hidden="true" className="stream-caret" /> : null}
+            {interrupted ? (
+              <p className="mt-1 text-[10.5px] glass-text-subtle">Response interrupted.</p>
+            ) : null}
+          </div>
         </div>
         {!streaming && message.content ? <CopyResponse text={message.content} /> : null}
       </div>
@@ -392,8 +398,21 @@ export function MessageList({
           );
         })}
 
-        {streaming && messages.at(-1)?.role === "user" ? (
-          <TypingIndicator provider={provider} />
+        {/* Mounted for the whole stream, not only until the first token. Once
+            the answer exists the slot plays its collapse-and-fade exit, so by
+            the time streaming ends and React unmounts it, it is already
+            invisible and zero-height -- the beads never simply vanish, and no
+            timer or extra state is needed to hold them on screen. */}
+        {streaming ? (
+          <div
+            className={`typing-slot ${
+              messages.at(-1)?.role === "user" ? "" : "typing-exit"
+            }`}
+          >
+            <div>
+              <TypingIndicator provider={provider} />
+            </div>
+          </div>
         ) : null}
 
         {error && !needsSetup ? (

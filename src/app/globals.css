@@ -115,11 +115,16 @@ body {
      the text itself. */
   --diffusion-fill: rgba(255, 255, 255, 0.05);
   --glint-color: rgba(255, 255, 255, 0.32);
-  /* Assistant sheet: the only message surface there is. The user message now
-     sits directly on the panel with no container, so this fill just has to
-     stay light enough to read as an open sheet rather than a card. */
-  --sheet-fill: rgba(255, 255, 255, 0.07);
-  --sheet-line: rgba(255, 255, 255, 0.3);
+  /* Assistant pane. Not a fill: --asheet-rim only lifts the extreme edge of a
+     radial that is transparent through the centre. The edge tokens grade the
+     1px ring -- lit top-left, soft sides, darker lower-right -- so it reads as
+     a polished glass edge catching light rather than a drawn rectangle. */
+  --asheet-rim: rgba(255, 255, 255, 0.055);
+  --asheet-edge-lit: rgba(255, 255, 255, 0.78);
+  --asheet-edge-soft: rgba(255, 255, 255, 0.26);
+  --asheet-edge-dark: rgba(38, 30, 24, 0.22);
+  --asheet-spec: rgba(255, 255, 255, 0.95);
+  --asheet-spec-accent: color-mix(in srgb, var(--accent) 38%, rgba(255, 255, 255, 0.72));
   /* Specular reveal. Neutral white/silver in both tones; the light tone gets a
      hairline neutral definition so the streak still reads on a pale ground.
      Never a hue, never a halo. */
@@ -154,8 +159,12 @@ body {
   --modal-border: rgba(255, 255, 255, 0.5);
   --diffusion-fill: rgba(8, 10, 14, 0.13);
   --glint-color: rgba(255, 255, 255, 0.42);
-  --sheet-fill: rgba(255, 255, 255, 0.045);
-  --sheet-line: rgba(255, 255, 255, 0.14);
+  --asheet-rim: rgba(255, 255, 255, 0.04);
+  --asheet-edge-lit: rgba(255, 255, 255, 0.52);
+  --asheet-edge-soft: rgba(255, 255, 255, 0.15);
+  --asheet-edge-dark: rgba(0, 0, 0, 0.34);
+  --asheet-spec: rgba(255, 255, 255, 0.8);
+  --asheet-spec-accent: color-mix(in srgb, var(--accent) 42%, rgba(255, 255, 255, 0.6));
   /* On a dark ground the white core carries itself; the halo only softens. */
   --streak-core: rgba(255, 255, 255, 0.95);
   --streak-edge: rgba(255, 255, 255, 0.3);
@@ -605,12 +614,21 @@ body {
    duration, over a longer distance, with scale and a small blur to carry it.
 -------------------------------------------------------------------------- */
 
-/* Shared entrance curve. A long, calm ease-out: most of its progress lands in
-   the middle of the duration rather than in the first eighth, which is what
-   made the original 240ms expo-out imperceptible. No overshoot anywhere in
-   this file -- the messages resolve into the panel, they never spring. */
+/* Shared entrance curve, chosen by seeking the real animation at 700ms rather
+   than by eye. Vertical travel still remaining, in px, at 700ms duration:
+
+     cb(0.22,0.72,0.22,1)   18 | 9.54 | 4.24 | 1.93 | 0.85   <- previous
+     cb(0.34,0.50,0.20,1)   18 |13.29 | 7.09 | 3.20 | 1.39
+     cb(0.50,0.35,0.25,1)   18 |15.69 |11.68 | 5.79 | 2.30   <- chosen
+                            0ms  100ms  200ms  300ms  400ms
+
+   The previous curve had 89% of the travel done by 300ms, so lengthening the
+   duration alone would not have fixed "still feels too fast" -- the motion
+   simply ended early and then sat still. The chosen curve puts peak velocity
+   around 200-300ms and still has a third of the travel left at 300ms. No
+   overshoot anywhere in this file: messages resolve, they never spring. */
 .workspace-root {
-  --enter-curve: cubic-bezier(0.22, 0.72, 0.22, 1);
+  --enter-curve: cubic-bezier(0.5, 0.35, 0.25, 1);
 }
 
 /* --- User message entrance ------------------------------------------------
@@ -638,7 +656,7 @@ body {
    changes how any backdrop-filter nearby renders -- it would quietly alter the
    approved glass. */
 .user-enter {
-  animation: user-enter 520ms var(--enter-curve) backwards;
+  animation: user-enter 700ms var(--enter-curve) backwards;
   transform-origin: 100% 50%;
 }
 
@@ -687,27 +705,17 @@ body {
   );
   /* Feathers the ends and keeps the line off a hard pixel edge. */
   filter: blur(0.5px) var(--streak-definition);
-  animation: reveal-streak 820ms cubic-bezier(0.3, 0, 0.18, 1) 150ms 1 both;
+  animation: reveal-streak 1000ms cubic-bezier(0.3, 0, 0.18, 1) 200ms 1 both;
 }
 
-/* --- Assistant arrival: avatar first, then the sheet ---------------------- */
+/* --- Assistant arrival: three soft stages --------------------------------- */
 
-@keyframes avatar-pop {
-  0% {
-    opacity: 0;
-    transform: scale(0.85);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes surface-enter {
+/* Stage A -- provider identity. */
+@keyframes avatar-in {
   from {
     opacity: 0;
-    transform: translateY(16px) scale(0.985);
-    filter: blur(3px);
+    transform: translateY(8px) scale(0.92);
+    filter: blur(2px);
   }
   to {
     opacity: 1;
@@ -716,55 +724,140 @@ body {
   }
 }
 
-.assistant-enter .provider-avatar {
-  animation: avatar-pop 300ms var(--enter-curve) backwards;
+/* Stage B -- the glass pane itself. */
+@keyframes surface-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.992);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
 }
 
-/* Delayed behind the avatar so the identity lands first and the answer follows
-   it, rather than both appearing at once. `backwards` again, so no filter is
-   retained on a surface that carries its own backdrop-filter. */
+/* Stage C -- the answer inside it. No transform beyond a 6px lift: the pane
+   has already arrived, so the text only has to surface within it. */
+@keyframes content-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(1.5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.assistant-enter .provider-avatar {
+  animation: avatar-in 520ms var(--enter-curve) backwards;
+}
+
+/* Every stage uses `backwards`, never `forwards`: the `to` keyframe is the
+   resting style, so the fill lapses back to the stylesheet and no blur, scale
+   or stacking context is left behind on a settled answer. */
 .assistant-enter .assistant-surface {
-  animation: surface-enter 550ms var(--enter-curve) 140ms backwards;
+  animation: surface-in 740ms var(--enter-curve) 180ms backwards;
   transform-origin: 0% 0%;
 }
 
-/* Open glass sheet. Deliberately not a bubble: asymmetric radius with the
-   corner nearest the avatar cut back, a fill well below the user bubble's
-   0.12, a hairline edge, and no drop shadow. */
-/* Clear Glass thins every surface, so the sheet thins with it -- at the Glowy
-   values it reads as a card against Clear Glass's much lighter panel. */
+/* The container reveals once. Streamed tokens land inside a node that already
+   exists, so text keeps arriving through the reveal without restarting it and
+   without each chunk fading in separately. */
+.assistant-enter .assistant-content {
+  animation: content-in 650ms var(--enter-curve) 350ms backwards;
+}
+
+/* --- The assistant pane --------------------------------------------------
+   Previously this was a card, for four compounding reasons, all removed here:
+   a `backdrop-filter: blur(6px)` that frosted the whole rectangle and hid the
+   background forms behind it; a flat `--sheet-fill` covering the centre; a
+   uniform 1px border at 0.3 alpha, equally bright on all four sides, which is
+   a drawn rectangle rather than a glass edge; and a 36px accent blob in the
+   top-left corner.
+
+   What replaces it: no backdrop-filter at all, an almost imperceptible
+   rim-weighted wash that leaves the centre clear, and a graded 1px edge drawn
+   as a masked ring -- lit along the top-left, soft down the sides, darker on
+   the lower-right contour, with two short specular hits rather than a
+   continuous glow. Scoped entirely to .assistant-surface; the shared
+   Glowy/Clear material definitions are untouched.
+-------------------------------------------------------------------------- */
+
+/* Clear Glass is the thinnest, clearest grade: the centre wash drops to almost
+   nothing and the ring is finer, so the pane is announced by its edge alone.
+   Glowy Glass (the default above) keeps a slightly softer, more luminous edge.
+   Neither is filled. */
 .workspace-root[data-glass="ultra"][data-tone="light"] {
-  --sheet-fill: rgba(255, 255, 255, 0.034);
-  --sheet-line: rgba(255, 255, 255, 0.1);
+  --asheet-rim: rgba(255, 255, 255, 0.028);
+  --asheet-edge-lit: rgba(255, 255, 255, 0.62);
+  --asheet-edge-soft: rgba(255, 255, 255, 0.16);
+  --asheet-edge-dark: rgba(38, 30, 24, 0.17);
+  --asheet-spec: rgba(255, 255, 255, 0.88);
 }
 .workspace-root[data-glass="ultra"][data-tone="dark"] {
-  --sheet-fill: rgba(255, 255, 255, 0.03);
-  --sheet-line: rgba(255, 255, 255, 0.085);
+  --asheet-rim: rgba(255, 255, 255, 0.022);
+  --asheet-edge-lit: rgba(255, 255, 255, 0.42);
+  --asheet-edge-soft: rgba(255, 255, 255, 0.1);
+  --asheet-edge-dark: rgba(0, 0, 0, 0.28);
+  --asheet-spec: rgba(255, 255, 255, 0.72);
 }
 
 .assistant-surface {
   position: relative;
   border-radius: 6px 16px 16px 16px;
   padding: 0.6rem 0.85rem;
-  background: var(--sheet-fill);
-  border: 1px solid var(--sheet-line);
-  backdrop-filter: blur(6px) saturate(112%);
-  -webkit-backdrop-filter: blur(6px) saturate(112%);
+  /* Rim-weighted: transparent until ~68% out from the centre, so the panel and
+     its ambient forms read straight through the answer. */
+  background: radial-gradient(
+    118% 132% at 50% 46%,
+    transparent 68%,
+    var(--asheet-rim) 100%
+  );
+  border: 0;
+  /* No backdrop-filter and no box-shadow, by design. */
 }
 
-/* Small localised corner highlight in the provider accent -- the identity cue
-   asked for in R4, kept to one corner so it never becomes a glow. */
+/* The edge. A 1px ring via the padding-box/border-box mask difference, so the
+   centre stays completely open. Non-uniform on purpose: a real polished edge
+   catches light on one side and goes dark on the other. */
 .assistant-surface::before {
   content: "";
   position: absolute;
   inset: 0;
+  padding: 1px;
   border-radius: inherit;
   pointer-events: none;
-  background: radial-gradient(
-    36px 36px at 0% 0%,
-    color-mix(in srgb, var(--accent) 24%, transparent) 0%,
-    transparent 72%
-  );
+  background:
+    /* two short specular hits, not a perimeter glow */
+    radial-gradient(circle 15px at 16% 0%, var(--asheet-spec) 0%, transparent 72%),
+    radial-gradient(
+      circle 11px at 90% 100%,
+      var(--asheet-spec-accent) 0%,
+      transparent 74%
+    ),
+    /* graded perimeter: lit top-left, soft sides, dark lower-right */
+    linear-gradient(
+      138deg,
+      var(--asheet-edge-lit) 0%,
+      var(--asheet-edge-soft) 16%,
+      transparent 38%,
+      transparent 56%,
+      var(--asheet-edge-dark) 78%,
+      var(--asheet-edge-soft) 100%
+    );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
 }
 
 /* --- Typing indicator ----------------------------------------------------- */
@@ -782,6 +875,37 @@ body {
 
 .typing-row {
   animation: indicator-in 260ms var(--enter-curve) backwards;
+}
+
+/* Indicator exit. The beads themselves are unchanged -- this only governs how
+   the row leaves. The slot is a grid so its row track can be animated from
+   1fr to 0fr, which collapses the height smoothly instead of the row simply
+   vanishing when React unmounts it. The margin is animated with it because
+   `space-y-6` puts 1.5rem on this element, and a collapsed row still carrying
+   its margin would leave a 24px gap that snaps shut at unmount. */
+.typing-slot {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+.typing-slot > * {
+  overflow: hidden;
+}
+
+@keyframes typing-exit {
+  from {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    margin-top: 1.5rem;
+  }
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    margin-top: 0;
+  }
+}
+
+.typing-exit {
+  animation: typing-exit 220ms ease-out forwards;
 }
 
 @keyframes typing-dot {
@@ -907,16 +1031,26 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* One brief opacity fade for every stage, with the staged delays dropped so
+     nothing waits on anything else. */
   .user-enter,
   .typing-row,
   .assistant-enter .provider-avatar,
-  .assistant-enter .assistant-surface {
+  .assistant-enter .assistant-surface,
+  .assistant-enter .assistant-content {
     animation: rm-fade 140ms ease-out backwards;
+    animation-delay: 0s;
     transform: none;
     filter: none;
   }
   .reveal-streak {
     display: none;
+  }
+  /* No height collapse either: the row just fades. */
+  .typing-exit {
+    animation: rm-fade 140ms ease-out reverse forwards;
+    grid-template-rows: 0fr;
+    margin-top: 0;
   }
   .typing-dots i {
     animation: none;
