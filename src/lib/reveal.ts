@@ -20,13 +20,20 @@ export type TextRun = { text: string; group: number };
 
 /** Words released per tick, and the gap between ticks, for a given backlog. */
 export function pace(pending: number): { words: number; interval: number } {
-  // A long answer must not sit behind an artificial queue. The step widens
-  // with the backlog so a burst drains quickly while a slow trickle still
-  // reads word by word.
-  if (pending > 600) return { words: 28, interval: 28 };
-  if (pending > 260) return { words: 12, interval: 42 };
-  if (pending > 110) return { words: 6, interval: 58 };
-  return { words: 3, interval: 75 };
+  // The previous ladder topped out at 28 words every 28ms, which is what made
+  // a paragraph arriving in one chunk land as a burst rather than a reveal:
+  // measured on an 816-character paragraph delivered as a single chunk, it
+  // displayed in 10 steps of up to 36 characters each -- six or seven words at
+  // a time. That tier is gone.
+  //
+  // The base rate is now a steady 3 words every 160ms. The two relief steps
+  // exist only so a very long answer does not crawl; even the widest is 6
+  // words, so every step still reads as words appearing rather than a
+  // paragraph materialising. Anyone who would rather not wait has "Show full
+  // response", which bypasses pacing entirely.
+  if (pending > 1200) return { words: 6, interval: 120 };
+  if (pending > 400) return { words: 4, interval: 140 };
+  return { words: 3, interval: 160 };
 }
 
 /** True when an odd number of ``` fences opened before `index`. */

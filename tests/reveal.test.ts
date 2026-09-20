@@ -95,14 +95,28 @@ test("the reveal always terminates and never runs backwards", () => {
 
 /* --- pacing --------------------------------------------------------------- */
 
-test("pacing widens with the backlog so long answers do not crawl", () => {
+test("pacing never releases enough words to read as a burst", () => {
+  // The property that matters after the 28-words/28ms tier was removed: no
+  // backlog, however large, may dump a paragraph in one step. Six words is the
+  // widest step, so every tick still reads as words appearing.
+  for (const pending of [0, 50, 200, 401, 1201, 5000, 50000]) {
+    const p = pace(pending);
+    assert.ok(p.words <= 6, `${pending} chars pending released ${p.words} words`);
+    assert.ok(p.interval >= 120, `${pending} chars pending ticked every ${p.interval}ms`);
+  }
+});
+
+test("pacing relieves as the backlog grows, without accelerating sharply", () => {
   const small = pace(10);
   const large = pace(5000);
-  assert.ok(large.words > small.words, "a backlog should release more words");
-  assert.ok(large.interval < small.interval, "a backlog should tick faster");
-  // A 5000-character answer must not take minutes to display.
-  const ticks = 5000 / (large.words * 5);
-  assert.ok(ticks * large.interval < 12000, "long answers drain too slowly");
+  assert.ok(large.words >= small.words, "a backlog should not release fewer words");
+  assert.ok(large.interval <= small.interval, "a backlog should not tick slower");
+  // Deliberately slower than the previous build: this trial trades drain speed
+  // for a readable reveal, and "Show full response" is the escape hatch for
+  // anyone who does not want to wait. The bound here only guards against a
+  // regression into minutes.
+  const seconds = (5000 / (large.words * 5)) * large.interval / 1000;
+  assert.ok(seconds < 30, `a 5000-character answer would take ${seconds.toFixed(1)}s`);
 });
 
 /* --- run tagging ---------------------------------------------------------- */
