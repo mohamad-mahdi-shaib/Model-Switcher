@@ -13,6 +13,7 @@ import {
 import { Markdown } from "@/components/workspace/Markdown";
 import {
   ERROR_COPY,
+  timeFromId,
   type ChatErrorCode,
   type ChatErrorInfo,
   type ChatMessage,
@@ -38,20 +39,40 @@ const STARTERS = [
 
 /* ----------------------------------------------------------------- messages */
 
-function UserBubble({ content, fresh }: { content: string; fresh: boolean }) {
+function formatClock(date: Date): string {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * No container: the user message reads directly on the main glass panel. It
+ * previously carried `glass-btn` plus its own radius and border, which stacked
+ * a second glass box on top of the approved one. Identity now comes from
+ * alignment, a capped measure, a heavier weight and the sent row beneath.
+ */
+function UserMessage({ message, fresh }: { message: ChatMessage; fresh: boolean }) {
+  const sentAt = timeFromId(message.id);
   return (
-    <div className="flex justify-end pt-2">
-      {/* The entrance sits on the bubble, not the row: scale and blur have to
-          act on the object itself, and the rim sweep needs the bubble's own
-          border-radius. whitespace-pre-wrap renders newlines without
-          dangerouslySetInnerHTML. */}
-      <div
-        className={`glass-btn relative max-w-md rounded-[22px] border border-white/80 px-5 py-2.5 text-[13px] leading-snug font-medium tracking-tight break-words whitespace-pre-wrap glass-text-dark ${
-          fresh ? "user-enter" : ""
-        }`}
-      >
-        {fresh ? <span aria-hidden="true" className="rim-sweep" /> : null}
-        {content}
+    <div className="flex justify-end pt-3">
+      {/* Sizing and containing block for the reveal streak. Deliberately NOT
+          the animated element -- the entrance blurs whatever it is applied to,
+          and the streak has to stay crisp while it travels. The min-width is
+          invisible (there is no box) and only keeps the streak a sensible
+          length behind a very short message. */}
+      <div className="relative min-w-[160px] max-w-[min(58ch,520px)]">
+        <div className={fresh ? "user-enter" : ""}>
+          {/* whitespace-pre-wrap renders newlines without dangerouslySetInnerHTML. */}
+          <p className="text-right text-[13.5px] leading-relaxed font-semibold tracking-tight break-words whitespace-pre-wrap glass-text-dark">
+            {message.content}
+          </p>
+          <p className="mt-1 flex items-center justify-end gap-1 text-[10px] tracking-tight glass-text-subtle">
+            {sentAt ? (
+              <time dateTime={sentAt.toISOString()}>{formatClock(sentAt)}</time>
+            ) : null}
+            <span className="sr-only">Sent</span>
+            <CheckIcon aria-hidden="true" className="h-2.5 w-2.5" />
+          </p>
+        </div>
+        {fresh ? <span aria-hidden="true" className="reveal-streak" /> : null}
       </div>
     </div>
   );
@@ -356,10 +377,10 @@ export function MessageList({
         {messages.map((message, index) => {
           const isLast = index === messages.length - 1;
           return message.role === "user" ? (
-            <UserBubble
-              content={message.content}
+            <UserMessage
               fresh={isFresh(message.id)}
               key={message.id}
+              message={message}
             />
           ) : (
             <AssistantMessage

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deriveTitle, groupByRecency, isDraft, savedOnly } from "@/lib/conversations";
+import { newId, timeFromId } from "@/lib/chat";
 
 test("a title is derived locally from the first user message", () => {
   assert.equal(deriveTitle("How do I center a div?"), "How do I center a div");
@@ -61,4 +62,30 @@ test("a conversation with no messages is a draft and is not persisted", () => {
   assert.equal(isDraft(draft), true);
   assert.equal(isDraft(real), false);
   assert.deepEqual(savedOnly([draft, real]).map((c) => c.id), ["r"]);
+});
+
+/* --- derived message timestamps ----------------------------------------- */
+
+test("a message timestamp is recovered from the id newId generated", () => {
+  const before = Date.now();
+  const id = newId("u");
+  const after = Date.now();
+  const at = timeFromId(id);
+  assert.ok(at, "expected a date");
+  // newId encodes Date.now() in base 36, so the recovered time is exact to
+  // the millisecond, not merely close.
+  assert.ok(at.getTime() >= before && at.getTime() <= after);
+});
+
+test("timestamps are recovered from ids of every prefix", () => {
+  for (const prefix of ["u", "a", "c", "r"]) {
+    assert.ok(timeFromId(newId(prefix)), `${prefix} id should carry a time`);
+  }
+});
+
+test("an unrecognised id yields no timestamp rather than a wrong one", () => {
+  // A wrong clock printed under a message is worse than no clock at all.
+  for (const bad of ["", "u", "u-", "u-zzz!-1", "legacy_id", "u--1"]) {
+    assert.equal(timeFromId(bad), null, `${bad} should not parse`);
+  }
 });

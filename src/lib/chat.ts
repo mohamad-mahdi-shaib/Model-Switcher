@@ -94,3 +94,23 @@ export function newId(prefix: string): string {
   counter += 1;
   return `${prefix}-${Date.now().toString(36)}-${counter}`;
 }
+
+/**
+ * Reads back the creation time `newId` encodes in the middle segment.
+ *
+ * The message timestamp is derived rather than stored: every id already
+ * carries its own millisecond clock, so showing a sent-time needs no new field
+ * on ChatMessage and therefore no change to the persisted schema or to what
+ * already-saved conversations validate against.
+ *
+ * Returns null for any id not in that shape, so an unrecognised id renders no
+ * timestamp rather than a wrong one.
+ */
+export function timeFromId(id: string): Date | null {
+  const segment = id.split("-")[1];
+  if (!segment || !/^[0-9a-z]+$/.test(segment)) return null;
+  const ms = parseInt(segment, 36);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
