@@ -15,9 +15,17 @@
  * paragraph and code as tokens land.
  */
 
+import type { TextRun } from "@/lib/reveal";
+
+/**
+ * `runs` / `group` are attached after parsing by `tagRuns` in reveal.ts, to
+ * mark which reveal step each stretch of text belongs to. The parser never
+ * sets them and nothing here depends on them, so parsing stays independent of
+ * presentation pacing.
+ */
 export type InlineNode =
-  | { type: "text"; value: string }
-  | { type: "code"; value: string }
+  | { type: "text"; value: string; runs?: TextRun[] }
+  | { type: "code"; value: string; group?: number }
   | { type: "strong"; children: InlineNode[] }
   | { type: "em"; children: InlineNode[] }
   | { type: "link"; href: string; children: InlineNode[] };
@@ -25,7 +33,13 @@ export type InlineNode =
 export type BlockNode =
   | { type: "paragraph"; children: InlineNode[] }
   | { type: "heading"; level: 1 | 2 | 3 | 4; children: InlineNode[] }
-  | { type: "code"; lang: string | null; value: string; open: boolean }
+  | {
+      type: "code";
+      lang: string | null;
+      value: string;
+      open: boolean;
+      runs?: TextRun[];
+    }
   | { type: "list"; ordered: boolean; start: number; items: InlineNode[][] }
   | { type: "quote"; children: InlineNode[] }
   | { type: "hr" };

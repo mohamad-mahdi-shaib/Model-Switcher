@@ -20,6 +20,7 @@ import {
 } from "@/lib/chat";
 import { getProviderMeta, type ProviderId } from "@/lib/providers";
 import type { ChatStatus } from "@/lib/use-conversations";
+import { useReveal } from "@/lib/use-reveal";
 
 type MessageListProps = {
   messages: readonly ChatMessage[];
@@ -53,12 +54,10 @@ function UserMessage({ message, fresh }: { message: ChatMessage; fresh: boolean 
   const sentAt = timeFromId(message.id);
   return (
     <div className="flex justify-end pt-3">
-      {/* Sizing and containing block for the reveal streak. Deliberately NOT
-          the animated element -- the entrance blurs whatever it is applied to,
-          and the streak has to stay crisp while it travels. The min-width is
-          invisible (there is no box) and only keeps the streak a sensible
-          length behind a very short message. */}
-      <div className="relative min-w-[160px] max-w-[min(58ch,520px)]">
+      {/* The row holds its final size from the first frame -- the entrance
+          animates opacity and a few pixels of transform only, so nothing below
+          reflows as the message appears. */}
+      <div className="max-w-[min(58ch,520px)]">
         <div className={fresh ? "user-enter" : ""}>
           {/* whitespace-pre-wrap renders newlines without dangerouslySetInnerHTML. */}
           <p className="text-right text-[13.5px] leading-relaxed font-semibold tracking-tight break-words whitespace-pre-wrap glass-text-dark">
@@ -72,7 +71,6 @@ function UserMessage({ message, fresh }: { message: ChatMessage; fresh: boolean 
             <CheckIcon aria-hidden="true" className="h-2.5 w-2.5" />
           </p>
         </div>
-        {fresh ? <span aria-hidden="true" className="reveal-streak" /> : null}
       </div>
     </div>
   );
@@ -113,6 +111,19 @@ function AssistantMessage({
   fresh: boolean;
 }) {
   const interrupted = message.state === "interrupted";
+  // Paced only for an answer that is genuinely arriving now. A restored or
+  // already-finished message mounts fully revealed and emits no run spans.
+  const { text, cuts, pending, showAll } = useReveal({
+    content: message.content,
+    streaming,
+    paced: fresh && message.state === "streaming",
+  });
+
+  // Stop must surface everything already received, at once.
+  useEffect(() => {
+    if (interrupted) showAll();
+  }, [interrupted, showAll]);
+
   return (
     // The class is on the row and the row is keyed by message id, so the
     // animation runs once on insertion. Streamed tokens re-render the contents
@@ -127,21 +138,33 @@ function AssistantMessage({
       </span>
       <div className="min-w-0 max-w-[680px]">
         <div className="assistant-surface text-[12.5px] leading-relaxed">
-          {/* Stage C reveals this container once, 350ms behind the avatar.
-              Streamed tokens land inside a node that already exists, so text
-              keeps arriving through the reveal without restarting it and
-              without each chunk fading in on its own. */}
-          <div className="assistant-content">
+          {/* aria-busy while text is still being paced, so assistive tech is
+              not asked to announce each revealed group as its own update. */}
+          <div aria-busy={streaming || pending > 0} className="assistant-content">
             {/* Model output goes through the Markdown AST renderer: React
-                elements only, never an HTML string. */}
-            <Markdown text={message.content} />
+                elements only, never an HTML string. `copySource` is the whole
+                received answer, so a code block's Copy never yields only the
+                part that happens to be on screen. */}
+            <Markdown copySource={message.content} cuts={cuts} text={text} />
             {streaming ? <span aria-hidden="true" className="stream-caret" /> : null}
             {interrupted ? (
               <p className="mt-1 text-[10.5px] glass-text-subtle">Response interrupted.</p>
             ) : null}
           </div>
         </div>
-        {!streaming && message.content ? <CopyResponse text={message.content} /> : null}
+        <div className="flex items-center gap-2">
+          {/* Canonical content, never the revealed prefix. */}
+          {!streaming && message.content ? <CopyResponse text={message.content} /> : null}
+          {pending > 0 ? (
+            <button
+              className="focus-glass mt-1 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] glass-text-subtle hover:bg-white/12 hover:glass-text-dark"
+              onClick={showAll}
+              type="button"
+            >
+              Show full response
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );

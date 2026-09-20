@@ -125,17 +125,6 @@ body {
   --asheet-edge-dark: rgba(38, 30, 24, 0.22);
   --asheet-spec: rgba(255, 255, 255, 0.95);
   --asheet-spec-accent: color-mix(in srgb, var(--accent) 38%, rgba(255, 255, 255, 0.72));
-  /* Specular reveal. Neutral white/silver in both tones; the light tone gets a
-     hairline neutral definition so the streak still reads on a pale ground.
-     Never a hue, never a halo. */
-  --streak-core: rgba(255, 255, 255, 1);
-  --streak-edge: rgba(255, 255, 255, 0.35);
-  /* A white streak on a pale panel has almost no luminance contrast on its
-     own -- measured against Warm Studio it barely read. Two neutral warm-grey
-     contact shadows give the highlight something to sit against. Grey, not a
-     hue, and gone with the element. */
-  --streak-definition: drop-shadow(0 0.5px 1px rgba(72, 64, 56, 0.5))
-    drop-shadow(0 1px 3px rgba(72, 64, 56, 0.32));
 }
 
 .workspace-root[data-tone="dark"] {
@@ -165,10 +154,6 @@ body {
   --asheet-edge-dark: rgba(0, 0, 0, 0.34);
   --asheet-spec: rgba(255, 255, 255, 0.8);
   --asheet-spec-accent: color-mix(in srgb, var(--accent) 42%, rgba(255, 255, 255, 0.6));
-  /* On a dark ground the white core carries itself; the halo only softens. */
-  --streak-core: rgba(255, 255, 255, 0.95);
-  --streak-edge: rgba(255, 255, 255, 0.3);
-  --streak-definition: drop-shadow(0 0 2px rgba(255, 255, 255, 0.3));
 }
 
 /* --- Ink helpers --------------------------------------------------------- */
@@ -640,136 +625,79 @@ body {
 @keyframes user-enter {
   from {
     opacity: 0;
-    transform: translateY(18px) scale(0.975);
-    filter: blur(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
-  }
-}
-
-/* `backwards`, never `forwards`: the `to` keyframe is the element's resting
-   style, so letting the fill lapse returns it to the stylesheet exactly. A
-   retained `filter: blur(0)` would leave a permanent stacking context, which
-   changes how any backdrop-filter nearby renders -- it would quietly alter the
-   approved glass. */
-.user-enter {
-  animation: user-enter 700ms var(--enter-curve) backwards;
-  transform-origin: 100% 50%;
-}
-
-/* --- One-time specular reveal ---------------------------------------------
-   Replaces the old rim sweep, which traced the bubble's outline and is
-   meaningless now that there is no bubble. This is a short horizontal streak
-   near the sent row: a thin feathered highlight that crosses once, right to
-   left, and leaves nothing behind. Not a border, not a glow, no hue.
--------------------------------------------------------------------------- */
-
-@keyframes reveal-streak {
-  0% {
-    opacity: 0;
-    transform: translateX(26%) scaleX(0.55);
-  }
-  16% {
-    opacity: 1;
-  }
-  68% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(-122%) scaleX(1);
-  }
-}
-
-.reveal-streak {
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  /* Of the message width, which the parent sizes to the text. */
-  width: 42%;
-  height: 2.5px;
-  z-index: 1;
-  pointer-events: none;
-  opacity: 0;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0) 0%,
-    var(--streak-edge) 20%,
-    var(--streak-core) 50%,
-    var(--streak-edge) 80%,
-    rgba(255, 255, 255, 0) 100%
-  );
-  /* Feathers the ends and keeps the line off a hard pixel edge. */
-  filter: blur(0.5px) var(--streak-definition);
-  animation: reveal-streak 1000ms cubic-bezier(0.3, 0, 0.18, 1) 200ms 1 both;
-}
-
-/* --- Assistant arrival: three soft stages --------------------------------- */
-
-/* Stage A -- provider identity. */
-@keyframes avatar-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.92);
-    filter: blur(2px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
-  }
-}
-
-/* Stage B -- the glass pane itself. */
-@keyframes surface-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px) scale(0.992);
-    filter: blur(2px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
-  }
-}
-
-/* Stage C -- the answer inside it. No transform beyond a 6px lift: the pane
-   has already arrived, so the text only has to surface within it. */
-@keyframes content-in {
-  from {
-    opacity: 0;
     transform: translateY(6px);
-    filter: blur(1.5px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
-    filter: blur(0);
+  }
+}
+
+/* Opacity-led, with only a few pixels of lift: the complaint about the old
+   entrance was that the message moved upward, so travel is now small and the
+   duration long enough that the fade, not the motion, is what the eye reads.
+   No scale, no blur, no overshoot, no decorative light.
+
+   `backwards`, never `forwards`: the `to` keyframe is the resting style, so
+   the fill lapses back to the stylesheet and no transform or stacking context
+   is left on a settled message. The row reserves its full height from the
+   first frame -- only appearance is animated, never layout. */
+.user-enter {
+  animation: user-enter 900ms cubic-bezier(0.4, 0, 0.2, 1) backwards;
+}
+
+/* --- Assistant arrival: three soft stages --------------------------------- */
+
+/* The words now fade in individually as they are revealed, so the container
+   no longer needs a stage of its own. A delayed full-container fade on top of
+   the word reveal would hide arriving text behind a second curtain, so the
+   Stage C `content-in` animation was removed rather than retimed. What is left
+   is two gentle, overlapping appearances and nothing to wait for. */
+@keyframes avatar-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes surface-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
 .assistant-enter .provider-avatar {
-  animation: avatar-in 520ms var(--enter-curve) backwards;
+  animation: avatar-in 460ms cubic-bezier(0.4, 0, 0.2, 1) backwards;
 }
 
-/* Every stage uses `backwards`, never `forwards`: the `to` keyframe is the
-   resting style, so the fill lapses back to the stylesheet and no blur, scale
-   or stacking context is left behind on a settled answer. */
+/* Only 90ms behind the avatar: enough to read as the identity landing first,
+   short enough that no one waits for the answer. */
 .assistant-enter .assistant-surface {
-  animation: surface-in 740ms var(--enter-curve) 180ms backwards;
-  transform-origin: 0% 0%;
+  animation: surface-in 520ms cubic-bezier(0.4, 0, 0.2, 1) 90ms backwards;
 }
 
-/* The container reveals once. Streamed tokens land inside a node that already
-   exists, so text keeps arriving through the reveal without restarting it and
-   without each chunk fading in separately. */
-.assistant-enter .assistant-content {
-  animation: content-in 650ms var(--enter-curve) 350ms backwards;
+/* Each revealed group of words mounts once, keyed by its group index, so this
+   fires exactly once per run and settled words never re-animate. */
+@keyframes reveal-run {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.reveal-run {
+  animation: reveal-run 190ms ease-out backwards;
 }
 
 /* --- The assistant pane --------------------------------------------------
@@ -1036,15 +964,16 @@ body {
   .user-enter,
   .typing-row,
   .assistant-enter .provider-avatar,
-  .assistant-enter .assistant-surface,
-  .assistant-enter .assistant-content {
+  .assistant-enter .assistant-surface {
     animation: rm-fade 140ms ease-out backwards;
     animation-delay: 0s;
     transform: none;
     filter: none;
   }
-  .reveal-streak {
-    display: none;
+  /* Revealed words appear with no fade at all. The pacing itself is bypassed
+     in use-reveal, so chunks land as they arrive. */
+  .reveal-run {
+    animation: none;
   }
   /* No height collapse either: the row just fades. */
   .typing-exit {

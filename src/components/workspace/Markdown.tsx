@@ -7,6 +7,7 @@ import {
   type BlockNode,
   type InlineNode,
 } from "@/lib/markdown";
+import { tagRuns, type TextRun } from "@/lib/reveal";
 
 /**
  * Renders the Markdown AST as React elements. There is no HTML string and no
@@ -28,13 +29,36 @@ function useCopy() {
   return { copied, copy };
 }
 
+/**
+ * Renders one text value as its reveal runs.
+ *
+ * Each run is keyed by its group index, which is derived from the run's
+ * absolute position, so a run that has already been shown keeps the same key
+ * and the same DOM node on every later render. Mounting is therefore the only
+ * moment `reveal-run` can fire -- settled words never re-animate when the next
+ * chunk lands. Without `runs` (a restored or fully revealed answer) the text is
+ * emitted plainly, with no extra elements at all.
+ */
+function Runs({ value, runs }: { value: string; runs?: TextRun[] }) {
+  if (!runs) return <>{value}</>;
+  return (
+    <>
+      {runs.map((run) => (
+        <span className="reveal-run" key={run.group}>
+          {run.text}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function Inline({ nodes }: { nodes: InlineNode[] }) {
   return (
     <>
       {nodes.map((node, i) => {
         switch (node.type) {
           case "text":
-            return <span key={i}>{node.value}</span>;
+            return <Runs key={i} runs={node.runs} value={node.value} />;
           case "code":
             return (
               <code
@@ -79,10 +103,16 @@ function CodeBlock({
   lang,
   value,
   open,
+  runs,
+  copyValue,
 }: {
   lang: string | null;
+  /** What is currently on screen. */
   value: string;
   open: boolean;
+  runs?: TextRun[];
+  /** The whole received block, including anything still queued for reveal. */
+  copyValue: string;
 }) {
   const { copied, copy } = useCopy();
   return (
@@ -95,7 +125,7 @@ function CodeBlock({
         <button
           aria-label={copied ? "Code copied" : "Copy code"}
           className="focus-glass flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] glass-text-subtle transition-colors hover:bg-white/12 hover:glass-text-dark"
-          onClick={() => copy(value)}
+          onClick={() => copy(copyValue)}
           type="button"
         >
           {copied ? (
@@ -109,14 +139,15 @@ function CodeBlock({
       {/* Horizontal scroll keeps long lines readable without reflowing. */}
       <pre className="glass-scroll overflow-x-auto px-3 py-2">
         <code className="font-mono text-[11.5px] leading-relaxed whitespace-pre glass-text-dark">
-          {value}
+          {/* Copy always sends the whole `value`, never the revealed runs. */}
+          <Runs runs={runs} value={value} />
         </code>
       </pre>
     </div>
   );
 }
 
-function Block({ node }: { node: BlockNode }) {
+function Block({ node, copyValue }: { node: BlockNode; copyValue?: string }) {
   switch (node.type) {
     case "paragraph":
       return (
@@ -139,7 +170,15 @@ function Block({ node }: { node: BlockNode }) {
       );
     }
     case "code":
-      return <CodeBlock lang={node.lang} open={node.open} value={node.value} />;
+      return (
+        <CodeBlock
+          copyValue={copyValue ?? node.value}
+          lang={node.lang}
+          open={node.open}
+          runs={node.runs}
+          value={node.value}
+        />
+      );
     case "list":
       return node.ordered ? (
         <ol
@@ -172,13 +211,38 @@ function Block({ node }: { node: BlockNode }) {
   }
 }
 
-export function Markdown({ text }: { text: string }) {
-  const blocks = parseMarkdown(text);
+export function Markdown({
+  text,
+  cuts,
+  copySource,
+}: {
+  text: string;
+  cuts?: readonly number[];
+  /** Full received content, when `text` is only the revealed prefix. */
+  copySource?: string;
+}) {
+  const parsed = parseMarkdown(text);
+  // No cuts means nothing is being paced: render the AST untouched, so a
+  // restored conversation emits no run spans and no animations whatsoever.
+  const blocks = cuts && cuts.length ? tagRuns(parsed, cuts) : parsed;
+
+  // Code blocks copy from the canonical parse, matched by their ordinal among
+  // code blocks. The revealed text is a prefix of the same source, so the nth
+  // displayed block is the nth received one; a block not yet reached simply
+  // falls back to what is on screen.
+  const fullCode =
+    copySource && copySource !== text
+      ? parseMarkdown(copySource).flatMap((b) => (b.type === "code" ? [b.value] : []))
+      : null;
+  let codeIndex = 0;
+
   return (
     <div className="markdown-body">
-      {blocks.map((node, i) => (
-        <Block key={i} node={node} />
-      ))}
+      {blocks.map((node, i) => {
+        const copyValue =
+          node.type === "code" ? fullCode?.[codeIndex++] : undefined;
+        return <Block copyValue={copyValue} key={i} node={node} />;
+      })}
     </div>
   );
 }
