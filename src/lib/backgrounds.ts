@@ -2,7 +2,8 @@
  * Backgrounds come in two collections:
  *
  * - Ambient: three CSS-gradient presets derived from references/code.html.
- * - Luxury:  four bundled local SVG artworks in /public/backgrounds.
+ * - Luxury:  four bundled local SVG artworks plus one photograph, all in
+ *            /public/backgrounds. Nothing is fetched from a remote host.
  *
  * Emerald Velvet and Sunset Horizon were removed in Milestone 2B: both sat at
  * mid luminance, which the binary light/dark ink system cannot serve, and both
@@ -18,7 +19,8 @@ export type BackgroundId =
   | "champagne-silk"
   | "emerald-onyx"
   | "amethyst-bloom"
-  | "amber-aurora";
+  | "amber-aurora"
+  | "luxury-salon";
 
 export type BackgroundTone = "light" | "dark";
 
@@ -89,6 +91,16 @@ export const BACKGROUNDS: readonly Background[] = [
     collection: "Luxury",
     tone: "dark",
     swatch: "url('/backgrounds/amber-aurora.svg') center/cover",
+  },
+  {
+    // The only photographic background. Bundled locally; see README for the
+    // source and its CC0 dedication.
+    id: "luxury-salon",
+    name: "Luxury Salon",
+    description: "Daylit room in warm white and oak",
+    collection: "Luxury",
+    tone: "light",
+    swatch: "url('/backgrounds/luxury-salon.jpg') center/cover",
   },
 ] as const;
 
@@ -163,6 +175,7 @@ export const AMBIENT_ORBS: Record<BackgroundId, readonly AmbientOrb[]> = {
     { className: "bottom-[18%] right-[16%] w-[420px] h-[420px]", color: "rgba(140, 156, 176, 0.32)", blur: "95px" },
   ],
   "champagne-silk": [],
+  "luxury-salon": [],
   "emerald-onyx": [],
   "amethyst-bloom": [],
   "amber-aurora": [],

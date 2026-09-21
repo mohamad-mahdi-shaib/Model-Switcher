@@ -196,6 +196,37 @@ and disabled, and cannot originate a request.
 
 ---
 
+## Backgrounds
+
+Eight presets in two collections. Seven are local SVG artwork or CSS gradients.
+One, **Luxury Salon**, is a photograph.
+
+| | |
+| --- | --- |
+| File | `public/backgrounds/luxury-salon.jpg` (2000x1335, ~284 KB) |
+| Source | [Chairs in a meeting room (Unsplash)](https://commons.wikimedia.org/wiki/File:Chairs_in_a_meeting_room_(Unsplash).jpg) on Wikimedia Commons |
+| Original | <https://unsplash.com/photos/DEdM9Vs6s8w> |
+| Licence | **CC0 1.0** - Creative Commons Zero, Public Domain Dedication. No attribution required; credited here anyway. |
+
+The file is **bundled locally and never hotlinked**, so no request leaves the
+origin at runtime. Two adjustments were made to the source, both recorded in
+`makeasset` notes and disclosed here rather than passed off as the original
+frame:
+
+1. A small printed card carrying a logo sat on the table. It is patched out
+   with a slice of the same wall, because the background must carry no text or
+   logos.
+2. A gamma lift, a small wash toward warm white and slight desaturation. The
+   raw frame has a deep orange-brown floor across its lower half; dark ink over
+   it measured **2.81:1**, under the 4.5:1 floor. Lifting the shadows fixes that
+   and moves the frame toward the warm white palette the preset is for. After
+   the pass the same text measures **5.07:1**, with the room still clearly
+   readable through the panels.
+
+Clear Glass + Luxury Salon reuses the Pearl Studio material rules rather than
+restating them: each selector gained a second preset, so there is one place to
+tune the material and no competing override. Glowy Glass keeps its own.
+
 ## Switching providers
 
 Switching is silent while a conversation is empty — there is no context to

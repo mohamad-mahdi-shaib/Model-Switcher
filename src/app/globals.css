@@ -87,6 +87,15 @@ body {
 .workspace-root[data-preset="amber-aurora"] {
   background-image: url("/backgrounds/amber-aurora.svg");
 }
+/* The one photographic background. Bundled locally -- never hotlinked. `cover`
+   plus a centre-left position keeps the window wall and the receding floor in
+   frame at both 1366x768 and 1680x1050, which is what gives the panels
+   something with real depth behind them. */
+.workspace-root[data-preset="luxury-salon"] {
+  background-image: url("/backgrounds/luxury-salon.jpg");
+  background-size: cover;
+  background-position: 42% 62%;
+}
 
 .workspace-root[data-tone="light"] {
   --ink: #1a1c22;
@@ -1151,8 +1160,13 @@ body {
 
 /* ===========================================================================
    EXPERIMENT: Pearl Studio glass realism
-   Scope: Clear Glass + Warm Studio ONLY -- every rule below is gated on
-   [data-glass="ultra"][data-preset="warm"].
+   Scope: Clear Glass + Warm Studio, and Clear Glass + Luxury Salon. Every
+   rule below is gated on [data-glass="ultra"] AND one of those two presets.
+
+   Luxury Salon reuses these same rule bodies by adding itself to each
+   selector rather than restating the values, so there is one place to tune
+   the material and no competing override layer. Only the background-image
+   block below is Warm-Studio-specific.
 
    Nothing here can reach Glowy Glass, the other six backgrounds, or Clear
    Glass on any other background: the shared Warm Studio asset and the shared
@@ -1202,7 +1216,8 @@ body {
    neutral hairline plus the existing graded ring, and the fill is reduced
    until the folds read straight through the centre.
 -------------------------------------------------------------------------- */
-.workspace-root[data-glass="ultra"][data-preset="warm"] .optical-glass {
+.workspace-root[data-glass="ultra"][data-preset="warm"] .optical-glass,
+.workspace-root[data-glass="ultra"][data-preset="luxury-salon"] .optical-glass {
   /* Thinner rim: more polished, less drawn. */
   --rim-line: 1px;
   /* Bright crest top-left, soft sides, a real contour lower-right. The dark
@@ -1236,7 +1251,8 @@ body {
 
 /* Sidebar: same language, quieter, so the two panels are lit by one source
    rather than competing. */
-.workspace-root[data-glass="ultra"][data-preset="warm"] aside.optical-glass {
+.workspace-root[data-glass="ultra"][data-preset="warm"] aside.optical-glass,
+.workspace-root[data-glass="ultra"][data-preset="luxury-salon"] aside.optical-glass {
   --edge-lit: 0.72;
   --edge-soft: 0.2;
   --edge-dark: 0.13;
@@ -1256,14 +1272,16 @@ body {
 
 /* The pointer glint is the existing system, unchanged in mechanism: only its
    colour is warmed so the highlight belongs to this light. */
-.workspace-root[data-glass="ultra"][data-preset="warm"] {
+.workspace-root[data-glass="ultra"][data-preset="warm"],
+.workspace-root[data-glass="ultra"][data-preset="luxury-salon"] {
   --glint-color: rgba(255, 252, 244, 0.5);
 }
 
 /* Reduced motion already disables the glint in use-edge-glint.ts; this keeps
    the pane's resting appearance finished rather than half-lit. */
 @media (prefers-reduced-motion: reduce) {
-  .workspace-root[data-glass="ultra"][data-preset="warm"] .edge-glint {
+  .workspace-root[data-glass="ultra"][data-preset="warm"] .edge-glint,
+  .workspace-root[data-glass="ultra"][data-preset="luxury-salon"] .edge-glint {
     display: none;
   }
 }
