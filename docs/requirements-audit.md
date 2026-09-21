@@ -1,13 +1,17 @@
 # Requirements audit — Numbase Project 1: Creative Model-Switcher Interface
 
 **Audited against:** `references/Project 1_ Model-Switcher AI Interface .pdf` (read in full)
-**Date:** 2026-09-19 · **Post-implementation** (milestones 3B, 3C-A, 3C-B, 4A, 4B)
-**Method:** PDF re-read, code inspection, `npm test` (38 unit/contract tests), and a 32-check browser acceptance suite run at **1366×768 and 1680×1050**.
+**Date:** 2026-09-21 · **Post-implementation** (through milestone 13: OpenAI as the second provider)
+**Method:** PDF re-read, code inspection, `npm test` (83 unit / contract / adapter tests) and browser acceptance suites at **1366×768**.
+
+**Provider verification state at this revision:** Gemini is verified against the live API. **OpenAI is implemented and verified against mocked upstream responses only** — the account is unfunded and no real OpenAI request has been made. R14 is deliberately left open on that basis.
 
 **Evidence labels**
 - **[MOCKED]** — browser suite with all model traffic stubbed at `window.fetch`. No request reached Google; no quota consumed.
 - **[UNIT]** — `npm test`. No network.
 - **[LIVE]** — a real Gemini request. Exactly **one** was made this pass, to verify the refactored provider path.
+- **[ADAPTER-MOCK]** — the real adapter run against a mocked *upstream*: the adapter's own `fetch` is intercepted, so its SSE parsing, delta normalisation, abort handling and error classification are the code under test. Distinct from [MOCKED], which stubs the browser's `fetch` and never reaches adapter code at all.
+- **⚠️ NOT LIVE-VERIFIED** — implemented and covered by tests, but never exercised against the real provider.
 - **Static** — code read, `grep`, `git` history.
 
 ---
@@ -65,12 +69,15 @@
 
 ### R4 — Subtle visual identity per model
 - **PDF:** §2 "Model Identity" — "**Can you make the UI change subtly when I switch between GPT-4 and Gemini?** (e.g., a color shift or a different glow)."
-- **Status: Partial**
-- **Code:** `data-provider` on the workspace root (`WorkspaceLayout.tsx:84`); `globals.css` `--accent` per provider and per tone; `.provider-avatar`, `.provider-chip-active`, `.typing-dots`, and the Clear Glass edge glint consume it.
-- **Does:** A single restrained accent token drives the avatar rim, active chip, typing dots and glint. Panels, backgrounds and ink are untouched, so contrast is unchanged on all seven backgrounds. Dark tones use a lifted accent.
-- **Evidence:** [MOCKED] `data-provider = "gemini"`, `--accent` resolves to `#6f7f9b`. All three provider accents are defined.
-- **Gap:** **The change cannot be observed by switching**, because only one provider is live. The mechanism is complete and per-provider values exist; a reviewer cannot see it change until a second key exists (see R14).
-- **Test:** With two providers live, switch and confirm `data-provider` and the computed `--accent` both change, with no shift in text contrast.
+- **Status: Complete** *(was Partial — unobservable with one provider)*
+- **Code:** `data-provider` on the workspace root; `data-msg-provider` per assistant row (`MessageList.tsx`); `globals.css` `--accent` per provider and per tone, plus `[data-msg-provider]` scopes; `.provider-avatar`, `.provider-chip-active`, `.typing-dots`, `.provider-model` and the Clear Glass edge glint consume it.
+- **Does:** A single restrained accent token drives the avatar rim, active chip, typing dots, the model readout and the glint. Panels, backgrounds, ink and typography are untouched, so contrast is unchanged on all seven backgrounds. The header shows the active model name. Each assistant message carries the accent of the model that produced **it**, not of whatever is selected now.
+- **Evidence:**
+  - [MOCKED] Selecting GPT moves the workspace to `data-provider="gpt"` with `--accent` `#4f8c72`, against Gemini's `#6f7f9b`; the model readout changes `gemini-mock-model` → `gpt-mock-model`.
+  - [MOCKED] After switching, the earlier answer still reports `data-msg-provider="gemini"` and resolves `--accent: #6f7f9b` while the workspace resolves `#4f8c72` — the transcript is not re-tinted behind the user.
+  - [MOCKED] A mixed conversation renders rows `[gemini, gpt]`, and that attribution survives a hard refresh.
+- **Gap:** None.
+- **Test:** Switch with a conversation in progress; the header accent and model change, every earlier answer keeps its own.
 
 ### R5 — User vs AI distinction beyond alignment
 - **PDF:** §5.1 — "**more than just alignment. Use icons, distinct shapes, or unique typography.**"
@@ -92,21 +99,29 @@
 
 ### R6 — Prominent, stylish model selector
 - **PDF:** §5.1 — "**A prominent, stylish selector.**"
-- **Status: Partial**
-- **Code:** `ChatHeader.tsx` — glass `role="radiogroup"`, top-right.
-- **Does:** All three providers render; the active one is accented. Availability is decided by the **server** probe, so a provider without a key cannot be chosen.
-- **Evidence:** [MOCKED] `[{Gemini, disabled:false, checked:true}, {Claude (Coming soon), disabled:true}, {GPT (Coming soon), disabled:true}]`.
-- **Gap:** Still effectively one selectable option — see R14.
-- **Test:** ≥2 providers selectable, each routing to its own adapter.
+- **Status: Complete** *(was Partial — one selectable option)*
+- **Code:** `ChatHeader.tsx` — glass `role="radiogroup"`, top-right, plus a `.provider-model` readout.
+- **Does:** All three providers render; the active one is accented and the model in use is shown beside it. Availability is decided by the **server** probe, so a provider without a key cannot be chosen. Selecting a provider issues no request.
+- **Evidence:**
+  - [MOCKED] `[{Gemini, disabled:false, checked:true}, {Claude, disabled:true, title:"…no ANTHROPIC_API_KEY…"}, {GPT, disabled:false}]`.
+  - [MOCKED] Clicking GPT left `window.__mock.requests` at **0** — selection is not a request.
+- **Gap:** None. Claude remains honestly disabled with its reason surfaced.
+- **Test:** Two providers selectable, each routing to its own adapter; Claude disabled with a stated reason.
 
 ### R7 — Model lock OR warning before switching after a chat starts
 - **PDF:** §5.1 — "**Crucial:** Once a chat starts, **lock the model or show a creative warning before switching.**"
-- **Status: Complete (logic) / Unverified in production (needs 2 live providers)**
+- **Status: Complete and exercised end to end** *(was logic-only, gated on a second provider)*
 - **Code:** `ChatHeader.tsx` `SwitchDialog` + `requestSwitch`; `conversationStarted` passed from `WorkspaceLayout.tsx:123`.
 - **Does:** Before any message exists, switching is silent (no context to carry). Once a user message exists, any switch to another *available* provider opens a glass `role="dialog"` explaining that the new model continues with existing context and may answer differently, with Cancel / Switch model. Cancel changes nothing. Escape and outside-click cancel. Focus moves to the confirm button.
-- **Evidence:** Static code path; [MOCKED] disabled providers are unclickable so the dialog cannot be reached today. The gate is `requestSwitch`, which every chip click passes through.
-- **Gap:** **Cannot be exercised end-to-end until a second provider is live.** The branch is written and reachable; it has not been observed firing.
-- **Test:** With two live providers: send a message, click the other provider → dialog appears; Cancel leaves the provider unchanged; Confirm updates it. Switching must never happen silently.
+- **Evidence:**
+  - [MOCKED] Empty conversation: clicking GPT switches with **no dialog**.
+  - [MOCKED] With a message present: `role="dialog"`, `aria-modal="true"`, labelled by its heading, focus on **Switch model**. Copy states that later messages send the whole conversation so far, and that replies already on screen keep their original model.
+  - [MOCKED] **Cancel** → provider stays `gemini`, transcript intact. **Escape** → same. **Confirm** → provider becomes `gpt`, transcript intact, and `requests` unchanged (confirming is not a request).
+  - [MOCKED] During an in-flight request the other chip reports `disabled=true`, `aria-disabled="true"`, is **not focusable**, and neither a click nor Enter/Space changes the selection or opens the dialog.
+  - [MOCKED] After a switch the next turn is sent with `provider: "gpt"` carrying **3** messages — the whole history — while the earlier answer stays attributed to Gemini.
+  - [MOCKED] A failed turn retried three times reports `sent=[gpt,gpt,gpt]`: a failure is never silently rerouted to the other provider.
+- **Gap:** None.
+- **Test:** Send a message, click the other provider → dialog; Cancel/Escape leave it unchanged; Confirm updates it. Try to switch mid-stream → refused.
 
 ### R8 — Designed welcome / empty state
 - **PDF:** §5.1 — "**Design a beautiful 'Welcome' screen. Don't leave it blank give it personality!**"
@@ -166,12 +181,18 @@
 
 ### R14 — Actual support for multiple AI providers
 - **PDF:** §3 "different AIs"; §4 "Gemini or GPT-4"; §2 "switch between GPT-4 and Gemini".
-- **Status: Missing — blocked on credentials**
-- **Code:** `registry.ts` registers Gemini only. OpenAI/Anthropic adapters are deliberately **not** written.
-- **Does:** Gemini works end to end. Claude and GPT are visible, labelled "Coming soon" with the reason, disabled, and cannot originate a request.
-- **Evidence:** [MOCKED] clicking Claude and GPT produced **0** network requests; both `aria-disabled="true"`. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are unset (checked by name only).
-- **Gap:** **A second provider key is required.** A stub adapter was rejected on purpose: it would either fabricate replies (dishonest) or fail confusingly.
-- **Test:** Same prompt to two providers in separate conversations returns two genuine, different replies.
+- **Status: Implemented — ⚠️ NOT LIVE-VERIFIED**
+- **Code:** `src/server/providers/openai.ts` (the only file that knows the OpenAI wire format); `registry.ts` registers `gpt`; `providers.ts` marks GPT enabled; `chat.ts` gains `INSUFFICIENT_CREDIT` and provider-aware error copy.
+- **Does:** Targets the Responses API (`POST /v1/responses`, `stream: true`), reading `response.output_text.delta`. Model defaults to `gpt-5.6-luna`, the cheapest current text tier per published pricing, overridable with `OPENAI_MODEL`. The whole conversation is sent each turn. Abort propagates to `fetch`. Vendor errors are normalised into the shared vocabulary, and **billing exhaustion is separated from throttling** even though both arrive as HTTP 429.
+- **Evidence:**
+  - [ADAPTER-MOCK] Deltas normalise and concatenate; non-text events are ignored; an empty answer yields zero deltas rather than throwing.
+  - [ADAPTER-MOCK] A 7-message history is sent in order with roles mapped, including **four** user turns; the key travels only in the `Authorization` header and never in the body; `availability()` never contains the key value.
+  - [ADAPTER-MOCK] The abort signal reaches `fetch`; aborting mid-stream stops delivery without throwing. A mid-stream `error` event throws `MODEL_BUSY` **after** already-delivered text is preserved.
+  - [ADAPTER-MOCK] `401 → INVALID_KEY` (not retryable). `429` with `credit_balance_exhausted` / `organization_spend_limit_exceeded` / `project_spend_limit_exceeded` / `organization_usage_limit_exceeded` → `INSUFFICIENT_CREDIT` (**not** retryable). `429 rate_limit_error` → `RATE_LIMIT` with `Retry-After: 12` read back. `503 → MODEL_BUSY` (retryable), `500 → UPSTREAM` (retryable), `400/404 → BAD_REQUEST`, `403 → INVALID_KEY`. A missing key fails **before** any request is attempted (0 calls).
+  - [ADAPTER-MOCK] SSE parsing survives a chunk boundary splitting a JSON payload mid-key, and skips `[DONE]` and malformed lines.
+  - [MOCKED] In the browser: GPT selectable, a turn routes to it, Stop/Retry/Copy work, and a GPT failure reports **"GPT could not complete that request."** — not Gemini.
+- **Gap:** **No real OpenAI request has ever been made.** The account is unfunded, and live verification was not authorised. Everything above tests the adapter's own code against mocked upstream bytes; it does not prove the key is valid, the model id is accepted, or that the live SSE stream matches the documented shape.
+- **Test (live, pending):** fund the account, then send one prompt to each provider in separate conversations and confirm two genuine, different replies.
 
 ### R15 — Consistent normalized response and error contracts
 - **PDF:** §6 Step 2 — "Every response from your backend should look exactly the same… **Normalization**."
@@ -232,12 +253,24 @@ R1 premium design · R2 entrance motion · R3 typing indicator · R5 user/AI dis
 See Appendix A.
 
 ### C. Remaining blockers
-1. **R14 — a second live provider.** Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. This is the one outstanding *functional* requirement.
-2. **R7 (verification) and R4 (observability)** are gated on the same credential. Both are implemented; neither can be demonstrated with one provider.
-3. **Key rotation** before submission.
+1. **R14 — live OpenAI acceptance.** The adapter is written, registered and covered by adapter-level tests against mocked upstream responses, but **no real OpenAI request has been made**: the account is unfunded and live verification was not authorised. Until one real exchange succeeds, GPT is implemented, not proven.
+2. **Key rotation** before submission — both the Gemini key and the OpenAI key were pasted into chat transcripts during setup.
+
+### D. Verified-with-mocks vs verified-live
+
+| Requirement | Implemented | Mocked verification | Live verification |
+| --- | --- | --- | --- |
+| Gemini end to end (R11–R13) | yes | yes | **yes** |
+| OpenAI adapter (R14) | yes | yes — [ADAPTER-MOCK] against mocked upstream | **no — pending funding** |
+| Switching warning (R7) | yes | yes — Cancel/Escape/Confirm/in-flight refusal | not required (UI-only) |
+| Provider identity (R4, R6) | yes | yes — accent, model readout, per-message attribution | not required (UI-only) |
+
+Nothing in this table is marked complete on the strength of mocked tests alone: R14's live column stays open deliberately.
 
 ### Verdict
-The two clusters that blocked the previous audit — **persistence/history** and **the abstraction layer** — are now complete and evidenced. What remains is a single external dependency: one more provider credential. With it, R14 closes and R7/R4 become demonstrable; without it, the architecture is finished but the "model-switcher" premise cannot be shown switching.
+The model-switcher premise can now be shown switching: two adapters are registered, the selector offers both, the confirmation gate has been exercised end to end, and provider identity is carried per message so a mixed transcript stays honest about which model said what. R4, R6 and R7 are closed.
+
+R14 is the one requirement that mocked tests cannot close. The OpenAI adapter is implemented and its own code is under test, but it has never spoken to OpenAI. That stays marked pending until the account is funded and a live exchange is explicitly authorised.
 
 ---
 

@@ -69,7 +69,10 @@ function isMessage(v: unknown): v is ChatMessage {
     (m.state === undefined ||
       m.state === "complete" ||
       m.state === "interrupted" ||
-      m.state === "streaming")
+      m.state === "streaming") &&
+    // Optional: conversations saved before multi-provider support have no
+    // provider on their messages, and must still load.
+    (m.provider === undefined || typeof m.provider === "string")
   );
 }
 

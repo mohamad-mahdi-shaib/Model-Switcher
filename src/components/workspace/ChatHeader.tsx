@@ -19,6 +19,10 @@ type ChatHeaderProps = {
   availability: AvailabilityMap | null;
   /** A switch mid-conversation must be confirmed, never silent. */
   conversationStarted: boolean;
+  /** A request is in flight: switching is refused outright while it is. */
+  busy: boolean;
+  /** Model the active provider will use, from the server probe. */
+  activeModel: string | null;
   onSelectProvider: (id: ProviderId) => void;
   pickerOpen: boolean;
   activeBackground: BackgroundId;
@@ -80,9 +84,11 @@ function SwitchDialog({
           </h2>
           <p className="mt-1.5 text-[11px] leading-relaxed glass-text-subtle">
             This conversation has already started with{" "}
-            <strong className="font-semibold">{getProviderMeta(from).label}</strong>.{" "}
-            {getProviderMeta(to).label} will continue with the existing context,
-            and its answers may differ in style and substance.
+            <strong className="font-semibold">{getProviderMeta(from).label}</strong>.
+            Every later message will send the{" "}
+            <strong className="font-semibold">whole conversation so far</strong>{" "}
+            to {getProviderMeta(to).label}, whose answers may differ in style and
+            substance. Replies already on screen keep their original model.
           </p>
         </div>
       </div>
@@ -112,6 +118,8 @@ export function ChatHeader({
   provider,
   availability,
   conversationStarted,
+  busy,
+  activeModel,
   onSelectProvider,
   pickerOpen,
   activeBackground,
@@ -125,6 +133,10 @@ export function ChatHeader({
   const requestSwitch = (target: ProviderId) => {
     if (target === provider) return;
     if (!isProviderUsable(target, availability)) return;
+    // Refused outright while a request is in flight: the turn already left for
+    // one provider, and changing selection underneath it would misattribute
+    // the answer that comes back.
+    if (busy) return;
     // Before any messages exist there is no context to carry, so no warning.
     if (!conversationStarted) {
       onSelectProvider(target);
@@ -150,6 +162,9 @@ export function ChatHeader({
           {PROVIDERS.map((item) => {
             const usable = isProviderUsable(item.id, availability);
             const isActive = item.id === provider;
+            // While busy, every other chip is inert -- including to the
+            // keyboard, which `disabled` alone would still allow to focus.
+            const locked = busy && !isActive;
             const reason =
               availability?.[item.id]?.reason ??
               item.note ??
@@ -157,23 +172,26 @@ export function ChatHeader({
             return (
               <button
                 aria-checked={isActive}
-                aria-disabled={!usable}
+                aria-disabled={!usable || locked}
                 aria-label={
-                  usable
-                    ? item.label
-                    : `${item.label} — ${UNAVAILABLE_LABEL}. ${reason}`
+                  !usable
+                    ? `${item.label} — ${UNAVAILABLE_LABEL}. ${reason}`
+                    : locked
+                      ? `${item.label} — cannot switch while a response is in progress`
+                      : item.label
                 }
+                disabled={locked}
                 className={`focus-glass rounded-full px-2.5 py-[3px] text-[11.5px] font-medium transition-colors ${
                   isActive
                     ? "provider-chip-active border glass-text-dark"
-                    : usable
-                      ? "border border-transparent glass-text-muted hover:bg-white/10"
-                      : "cursor-not-allowed border border-transparent opacity-45 glass-text-subtle"
+                    : !usable || locked
+                      ? "cursor-not-allowed border border-transparent opacity-45 glass-text-subtle"
+                      : "border border-transparent glass-text-muted hover:bg-white/10"
                 }`}
                 data-provider={item.id}
                 key={item.id}
                 onClick={() => {
-                  if (!usable) return;
+                  if (!usable || locked) return;
                   requestSwitch(item.id);
                 }}
                 role="radio"
@@ -188,6 +206,15 @@ export function ChatHeader({
             );
           })}
         </div>
+
+        {activeModel ? (
+          <span
+            className="provider-model hidden rounded-full px-2 py-[3px] text-[10px] tracking-tight glass-text-subtle lg:inline"
+            title={`${getProviderMeta(provider).label} is using ${activeModel}`}
+          >
+            {activeModel}
+          </span>
+        ) : null}
 
         <BackgroundPicker
           activeGlass={activeGlass}

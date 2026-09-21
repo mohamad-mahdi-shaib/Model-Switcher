@@ -120,6 +120,8 @@ export function WorkspaceLayout() {
             activeBackground={background}
             activeGlass={glass}
             availability={availability}
+            activeModel={availability?.[provider]?.model ?? null}
+            busy={status === "streaming"}
             conversationStarted={messages.length > 0}
             onPickerOpenChange={setPickerOpen}
             onSelectBackground={setBackground}

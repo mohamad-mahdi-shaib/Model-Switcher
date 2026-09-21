@@ -105,11 +105,30 @@ test("a per-minute quota id is reported as a minute scope", () => {
 
 /* ------------------------------------------------------ registry contract */
 
-test("the registry exposes Gemini and refuses unknown providers", () => {
+test("the registry exposes its two adapters and refuses everything else", () => {
   assert.ok(getProvider("gemini"));
-  assert.equal(getProvider("gpt"), null);
+  // GPT joined the registry when the OpenAI adapter landed. Anthropic is still
+  // deliberately absent rather than stubbed.
+  assert.ok(getProvider("gpt"));
   assert.equal(getProvider("anthropic"), null);
+  assert.equal(getProvider("claude"), null);
   assert.equal(getProvider("nonsense"), null);
+});
+
+test("being registered is not the same as being usable", () => {
+  // The route gates on availability(), not on registry membership: an adapter
+  // with no key present must report itself unconfigured rather than accept a
+  // request it cannot serve.
+  const prev = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  try {
+    const gpt = getProvider("gpt");
+    assert.ok(gpt);
+    assert.equal(gpt.availability().configured, false);
+  } finally {
+    if (prev === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = prev;
+  }
 });
 
 test("every registered provider satisfies the ChatProvider shape", () => {

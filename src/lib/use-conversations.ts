@@ -49,6 +49,8 @@ export function useConversations() {
   // an abort, or for a conversation the user has since left, is dropped rather
   // than leaking text into whatever is on screen now.
   const runRef = useRef<{ requestId: string; conversationId: string } | null>(null);
+  /** Provider of the most recent turn, so Retry re-sends to the same one. */
+  const failedProviderRef = useRef<ProviderId | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const inFlightRef = useRef(false);
 
@@ -165,6 +167,7 @@ export function useConversations() {
   const run = useCallback(
     async (conversationId: string, history: ChatMessage[], providerId: ProviderId) => {
       const requestId = newId("r");
+      failedProviderRef.current = providerId;
       const controller = new AbortController();
       abortRef.current = controller;
       runRef.current = { requestId, conversationId };
@@ -252,6 +255,9 @@ export function useConversations() {
                       role: "assistant",
                       content: event.text,
                       state: "streaming",
+                      // Stamped at creation so the answer keeps this identity
+                      // even if the conversation is switched afterwards.
+                      provider: providerId,
                     },
                   ],
                 }));
@@ -368,7 +374,10 @@ export function useConversations() {
     patch(conv.id, (c) => ({ ...c, messages: upto }));
     setError(null);
     setErrorInfo(null);
-    void run(conv.id, upto, conv.providerId);
+    // Retry the turn with the provider it was actually sent to, not whatever
+    // is selected now. Re-running a failed turn somewhere else would change
+    // which model answered without the user asking for that.
+    void run(conv.id, upto, failedProviderRef.current ?? conv.providerId);
   }, [patch, run]);
 
   const selectConversation = useCallback(

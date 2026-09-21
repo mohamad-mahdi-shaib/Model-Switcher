@@ -1,5 +1,6 @@
 import type { ProviderId } from "@/lib/providers";
 import { geminiProvider } from "@/server/providers/gemini";
+import { openaiProvider } from "@/server/providers/openai";
 import type { ChatProvider } from "@/server/providers/types";
 
 /**
@@ -8,14 +9,18 @@ import type { ChatProvider } from "@/server/providers/types";
  * Adding a provider = write an adapter implementing ChatProvider, then add one
  * line here. The API route never learns a vendor name.
  *
- * Adapters for OpenAI and Anthropic are intentionally absent rather than
- * stubbed: an adapter that cannot reach a real model would either fabricate
- * replies or fail confusingly. Both stay unavailable until a real key exists.
+ * Anthropic is intentionally absent rather than stubbed: an adapter that cannot
+ * reach a real model would either fabricate replies or fail confusingly. It
+ * stays unavailable until a real key exists.
+ *
+ * Registration alone does not make a provider usable. Each adapter's
+ * availability() decides that from whether its key is present on the server,
+ * and "key present" means configured -- not validated, and not funded.
  */
 
 const REGISTRY: Partial<Record<ProviderId, ChatProvider>> = {
   gemini: geminiProvider,
-  // openai: openaiProvider,     <- requires OPENAI_API_KEY
+  gpt: openaiProvider,
   // anthropic: anthropicProvider <- requires ANTHROPIC_API_KEY
 };
 

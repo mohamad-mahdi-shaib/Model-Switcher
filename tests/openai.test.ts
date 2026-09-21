@@ -1,0 +1,482 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { classifyOpenAi, openaiProvider, parseRetryAfter, parseSse } from "@/server/providers/openai";
+import { ProviderError } from "@/server/providers/types";
+import type { WireMessage } from "@/lib/chat";
+
+/**
+ * These exercise the REAL adapter against mocked UPSTREAM responses: the fetch
+ * the adapter itself performs is intercepted, so the SSE parsing, delta
+ * normalisation, abort handling and error classification under test are the
+ * ones that would run in production. No request leaves the process; the mock
+ * below throws if any URL other than the OpenAI endpoint is requested, so a
+ * miswired test fails loudly instead of reaching a live provider.
+ */
+
+const ENDPOINT = "https://api.openai.com/v1/responses";
+
+type FetchArgs = { url: string; init: RequestInit };
+
+/** Installs a fetch that only ever answers the OpenAI endpoint, from a script. */
+function mockUpstream(respond: (args: FetchArgs) => Response | Promise<Response>) {
+  const calls: FetchArgs[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = typeof input === "string" ? input : String(input);
+    if (!url.startsWith(ENDPOINT)) {
+      throw new Error(`refusing to leave the mock: ${url}`);
+    }
+    calls.push({ url, init });
+    return respond({ url, init });
+  }) as typeof fetch;
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = original;
+    },
+  };
+}
+
+function sse(...events: object[]): Response {
+  const body = events.map((e) => `event: ${(e as { type: string }).type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+function errorResponse(status: number, error: object, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify({ error }), {
+    status,
+    headers: { "Content-Type": "application/json", ...headers },
+  });
+}
+
+async function collect(iterable: AsyncIterable<{ text: string }>): Promise<string> {
+  let out = "";
+  for await (const d of iterable) out += d.text;
+  return out;
+}
+
+const USER: WireMessage[] = [{ role: "user", content: "hello" }];
+
+function withKey<T>(fn: () => Promise<T>): Promise<T> {
+  process.env.OPENAI_API_KEY = "test-key-not-real";
+  return fn().finally(() => {
+    delete process.env.OPENAI_API_KEY;
+  });
+}
+
+/* --- availability -------------------------------------------------------- */
+
+test("availability reports configured only when a key is present", () => {
+  delete process.env.OPENAI_API_KEY;
+  const without = openaiProvider.availability();
+  assert.equal(without.configured, false);
+  assert.match(without.reason ?? "", /OPENAI_API_KEY/);
+
+  process.env.OPENAI_API_KEY = "test-key-not-real";
+  const withIt = openaiProvider.availability();
+  assert.equal(withIt.configured, true);
+  assert.equal(withIt.reason, undefined);
+  delete process.env.OPENAI_API_KEY;
+});
+
+test("availability never leaks the key", () => {
+  process.env.OPENAI_API_KEY = "sk-secret-value-abc";
+  const json = JSON.stringify(openaiProvider.availability());
+  assert.ok(!json.includes("sk-secret-value-abc"), "key appeared in availability");
+  delete process.env.OPENAI_API_KEY;
+});
+
+test("the model is overridable and defaults to the documented economical tier", () => {
+  process.env.OPENAI_API_KEY = "test-key-not-real";
+  delete process.env.OPENAI_MODEL;
+  assert.equal(openaiProvider.availability().model, "gpt-5.6-luna");
+  process.env.OPENAI_MODEL = "gpt-5.6-terra";
+  assert.equal(openaiProvider.availability().model, "gpt-5.6-terra");
+  delete process.env.OPENAI_MODEL;
+  delete process.env.OPENAI_API_KEY;
+});
+
+/* --- progressive text and completion ------------------------------------ */
+
+test("streamed deltas are normalised and concatenate to the full answer", async () => {
+  const mock = mockUpstream(() =>
+    sse(
+      { type: "response.created" },
+      { type: "response.output_text.delta", delta: "Hello" },
+      { type: "response.output_text.delta", delta: ", " },
+      { type: "response.output_text.delta", delta: "world." },
+      { type: "response.completed" },
+    ),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      assert.equal(await collect(stream), "Hello, world.");
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("non-text events are ignored rather than emitted as text", async () => {
+  const mock = mockUpstream(() =>
+    sse(
+      { type: "response.created" },
+      { type: "response.in_progress" },
+      { type: "response.output_item.added", item: { type: "message" } },
+      { type: "response.output_text.delta", delta: "only this" },
+      { type: "response.output_text.done", text: "only this" },
+      { type: "response.completed" },
+    ),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      assert.equal(await collect(stream), "only this");
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("an empty answer yields no deltas rather than throwing", async () => {
+  const mock = mockUpstream(() => sse({ type: "response.created" }, { type: "response.completed" }));
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      assert.equal(await collect(stream), "");
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+/* --- history mapping ----------------------------------------------------- */
+
+test("the whole conversation is sent, in order, with roles mapped across", async () => {
+  const mock = mockUpstream(() => sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }));
+  try {
+    await withKey(async () => {
+      const history: WireMessage[] = [
+        { role: "user", content: "first question" },
+        { role: "assistant", content: "first answer" },
+        { role: "user", content: "second question" },
+        { role: "assistant", content: "second answer" },
+        { role: "user", content: "third question" },
+        { role: "assistant", content: "third answer" },
+        { role: "user", content: "what did I ask first?" },
+      ];
+      const stream = await openaiProvider.stream(history, new AbortController().signal);
+      await collect(stream);
+
+      const body = JSON.parse(String(mock.calls[0].init.body));
+      assert.equal(body.stream, true);
+      assert.equal(body.model, "gpt-5.6-luna");
+      assert.equal(body.input.length, 7, "every turn must be sent");
+      // At least three earlier user turns survive the mapping.
+      const users = body.input.filter((m: { role: string }) => m.role === "user");
+      assert.equal(users.length, 4);
+      assert.equal(body.input[0].content, "first question");
+      assert.equal(body.input[1].role, "assistant");
+      assert.equal(body.input.at(-1).content, "what did I ask first?");
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("the key travels in the Authorization header and nowhere else", async () => {
+  const mock = mockUpstream(() => sse({ type: "response.completed" }));
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      await collect(stream);
+      const { init } = mock.calls[0];
+      const headers = init.headers as Record<string, string>;
+      assert.equal(headers.Authorization, "Bearer test-key-not-real");
+      assert.ok(!String(init.body).includes("test-key-not-real"), "key leaked into the body");
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+/* --- abort --------------------------------------------------------------- */
+
+test("the abort signal is handed to fetch", async () => {
+  const mock = mockUpstream(() => sse({ type: "response.completed" }));
+  try {
+    await withKey(async () => {
+      const controller = new AbortController();
+      const stream = await openaiProvider.stream(USER, controller.signal);
+      await collect(stream);
+      assert.equal(mock.calls[0].init.signal, controller.signal);
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("aborting mid-stream stops delivery and does not throw", async () => {
+  const controller = new AbortController();
+  const mock = mockUpstream(
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            const enc = new TextEncoder();
+            const push = (o: object) =>
+              c.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
+            push({ type: "response.output_text.delta", delta: "before " });
+            // Abort arrives between chunks, as it does when Stop is pressed.
+            controller.abort();
+            push({ type: "response.output_text.delta", delta: "after" });
+            c.close();
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, controller.signal);
+      const text = await collect(stream);
+      assert.ok(!text.includes("after"), `text after abort was delivered: ${text}`);
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+/* --- mid-stream error ---------------------------------------------------- */
+
+test("a mid-stream error throws a ProviderError after delivered text", async () => {
+  const mock = mockUpstream(() =>
+    sse(
+      { type: "response.output_text.delta", delta: "partial answer" },
+      { type: "error", error: { type: "server_error", code: "server_is_overloaded" } },
+    ),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      let delivered = "";
+      await assert.rejects(
+        (async () => {
+          for await (const d of stream) delivered += d.text;
+        })(),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderError);
+          assert.equal((error as ProviderError).code, "MODEL_BUSY");
+          return true;
+        },
+      );
+      // Text that already arrived is not discarded by the failure.
+      assert.equal(delivered, "partial answer");
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+/* --- HTTP error classification ------------------------------------------- */
+
+test("an invalid key is reported as INVALID_KEY and never retried", async () => {
+  const mock = mockUpstream(() =>
+    errorResponse(401, { message: "Incorrect API key provided", type: "invalid_request_error" }),
+  );
+  try {
+    await withKey(async () => {
+      await assert.rejects(
+        openaiProvider.stream(USER, new AbortController().signal),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderError);
+          assert.equal((error as ProviderError).code, "INVALID_KEY");
+          assert.equal((error as ProviderError).retryable, false);
+          return true;
+        },
+      );
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("insufficient credit is distinguished from a rate limit, though both are 429", async () => {
+  // Billing: must NOT be retried -- waiting never clears it.
+  for (const code of [
+    "credit_balance_exhausted",
+    "organization_spend_limit_exceeded",
+    "project_spend_limit_exceeded",
+    "organization_usage_limit_exceeded",
+  ]) {
+    const mock = mockUpstream(() =>
+      errorResponse(429, { message: "quota", type: "insufficient_quota", code }),
+    );
+    try {
+      await withKey(async () => {
+        await assert.rejects(
+          openaiProvider.stream(USER, new AbortController().signal),
+          (error: unknown) => {
+            assert.equal((error as ProviderError).code, "INSUFFICIENT_CREDIT", code);
+            assert.equal((error as ProviderError).retryable, false, code);
+            return true;
+          },
+        );
+      });
+    } finally {
+      mock.restore();
+    }
+  }
+
+  // A genuine throttle on the same status is a different code.
+  const mock = mockUpstream(() =>
+    errorResponse(429, { message: "slow down", type: "rate_limit_error", code: "slow_down" }, { "Retry-After": "12" }),
+  );
+  try {
+    await withKey(async () => {
+      await assert.rejects(
+        openaiProvider.stream(USER, new AbortController().signal),
+        (error: unknown) => {
+          assert.equal((error as ProviderError).code, "RATE_LIMIT");
+          assert.equal((error as ProviderError).info?.retryAfterSeconds, 12);
+          return true;
+        },
+      );
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("server faults are retryable, client faults are not", async () => {
+  const cases: [number, object, string, boolean][] = [
+    [500, { type: "server_error" }, "UPSTREAM", true],
+    [503, { type: "service_unavailable_error", code: "server_is_overloaded" }, "MODEL_BUSY", true],
+    [400, { type: "invalid_request_error" }, "BAD_REQUEST", false],
+    [404, { type: "invalid_request_error", code: "model_not_found" }, "BAD_REQUEST", false],
+    [403, { type: "permission_error" }, "INVALID_KEY", false],
+  ];
+  for (const [status, error, code, retryable] of cases) {
+    const mock = mockUpstream(() => errorResponse(status, error));
+    try {
+      await withKey(async () => {
+        await assert.rejects(
+          openaiProvider.stream(USER, new AbortController().signal),
+          (e: unknown) => {
+            assert.equal((e as ProviderError).code, code, `status ${status}`);
+            assert.equal((e as ProviderError).retryable, retryable, `status ${status}`);
+            return true;
+          },
+        );
+      });
+    } finally {
+      mock.restore();
+    }
+  }
+});
+
+test("a missing key fails before any request is attempted", async () => {
+  delete process.env.OPENAI_API_KEY;
+  const mock = mockUpstream(() => {
+    throw new Error("must not be called");
+  });
+  try {
+    await assert.rejects(
+      openaiProvider.stream(USER, new AbortController().signal),
+      (error: unknown) => {
+        assert.equal((error as ProviderError).code, "MISSING_KEY");
+        return true;
+      },
+    );
+    assert.equal(mock.calls.length, 0, "a request was attempted without a key");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a transport failure is reported as NETWORK, not as a provider fault", async () => {
+  const mock = mockUpstream(() => {
+    throw new Error("fetch failed");
+  });
+  try {
+    await withKey(async () => {
+      await assert.rejects(
+        openaiProvider.stream(USER, new AbortController().signal),
+        (error: unknown) => {
+          assert.equal((error as ProviderError).code, "NETWORK");
+          return true;
+        },
+      );
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+/* --- unit-level helpers -------------------------------------------------- */
+
+test("classifyOpenAi maps statuses and codes as documented", () => {
+  assert.deepEqual(classifyOpenAi(401, null), { code: "INVALID_KEY", retryable: false });
+  assert.deepEqual(classifyOpenAi(429, { error: { type: "rate_limit_error" } }), {
+    code: "RATE_LIMIT",
+    retryable: false,
+  });
+  assert.deepEqual(
+    classifyOpenAi(429, { error: { code: "credit_balance_exhausted" } }),
+    { code: "INSUFFICIENT_CREDIT", retryable: false },
+  );
+  assert.deepEqual(classifyOpenAi(503, null), { code: "MODEL_BUSY", retryable: true });
+  assert.deepEqual(classifyOpenAi(500, null), { code: "UPSTREAM", retryable: true });
+  assert.deepEqual(classifyOpenAi(400, null), { code: "BAD_REQUEST", retryable: false });
+});
+
+test("Retry-After is read when supplied and invented when not", () => {
+  assert.deepEqual(parseRetryAfter(new Headers({ "Retry-After": "30" })), {
+    retryAfterSeconds: 30,
+  });
+  assert.equal(parseRetryAfter(new Headers()), undefined);
+  assert.equal(parseRetryAfter(new Headers({ "Retry-After": "not-a-number" })), undefined);
+});
+
+test("SSE parsing tolerates chunk boundaries splitting an event", async () => {
+  // The transport may break anywhere, including mid-JSON.
+  const pieces = [
+    'data: {"type":"response.output_text.delta","del',
+    'ta":"split"}\n\n',
+    'data: {"type":"response.completed"}\n\n',
+  ];
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      const enc = new TextEncoder();
+      for (const p of pieces) c.enqueue(enc.encode(p));
+      c.close();
+    },
+  });
+  const seen: string[] = [];
+  for await (const event of parseSse(body, new AbortController().signal)) {
+    seen.push(String(event.type));
+  }
+  assert.deepEqual(seen, ["response.output_text.delta", "response.completed"]);
+});
+
+test("SSE parsing skips the [DONE] sentinel and malformed lines", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      const enc = new TextEncoder();
+      c.enqueue(enc.encode('data: {"type":"a"}\n\n'));
+      c.enqueue(enc.encode("data: [DONE]\n\n"));
+      c.enqueue(enc.encode("data: not json\n\n"));
+      c.enqueue(enc.encode('data: {"type":"b"}\n\n'));
+      c.close();
+    },
+  });
+  const seen: string[] = [];
+  for await (const event of parseSse(body, new AbortController().signal)) {
+    seen.push(String(event.type));
+  }
+  assert.deepEqual(seen, ["a", "b"]);
+});

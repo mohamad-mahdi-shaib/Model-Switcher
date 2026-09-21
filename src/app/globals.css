@@ -1037,6 +1037,38 @@ body {
   --accent: #86c4a6;
 }
 
+/* Per-message identity. The workspace-level --accent follows the CURRENT
+   selection; these rules let an individual answer keep the accent of the model
+   that produced it, so switching provider does not re-tint the transcript
+   behind it. Same restrained token, same three values -- only the scope
+   differs. */
+[data-msg-provider="gemini"] {
+  --accent: #6f7f9b;
+}
+[data-msg-provider="claude"] {
+  --accent: #a8764e;
+}
+[data-msg-provider="gpt"] {
+  --accent: #4f8c72;
+}
+.workspace-root[data-tone="dark"] [data-msg-provider="gemini"] {
+  --accent: #9fb0cc;
+}
+.workspace-root[data-tone="dark"] [data-msg-provider="claude"] {
+  --accent: #d8a978;
+}
+.workspace-root[data-tone="dark"] [data-msg-provider="gpt"] {
+  --accent: #86c4a6;
+}
+
+/* The active model, beside the selector. A hairline pill, not a chip: it is a
+   readout, never a control. */
+.provider-model {
+  border: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
 .provider-avatar {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),

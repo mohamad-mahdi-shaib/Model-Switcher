@@ -34,7 +34,7 @@ export const PROVIDERS: readonly Provider[] = [
   {
     id: "gpt",
     label: "GPT",
-    enabled: false,
+    enabled: true,
     note: "Not connected — no OPENAI_API_KEY configured on the server.",
     accent: "#4f8c72",
   },

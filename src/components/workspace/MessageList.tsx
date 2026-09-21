@@ -12,7 +12,7 @@ import {
 } from "@/components/icons";
 import { Markdown } from "@/components/workspace/Markdown";
 import {
-  ERROR_COPY,
+  errorCopy,
   timeFromId,
   type ChatErrorCode,
   type ChatErrorInfo,
@@ -112,10 +112,13 @@ function AssistantMessage({
   message,
   streaming,
   fresh,
+  fallbackProvider,
 }: {
   message: ChatMessage;
   streaming: boolean;
   fresh: boolean;
+  /** Used only for answers saved before per-message attribution existed. */
+  fallbackProvider: ProviderId;
 }) {
   const interrupted = message.state === "interrupted";
   // Paced only for an answer that is genuinely arriving now. A restored or
@@ -139,6 +142,9 @@ function AssistantMessage({
       className={`group/msg flex items-start gap-3.5 pt-1 ${
         fresh ? "assistant-enter" : ""
       }`}
+      // Scopes --accent to the model that produced THIS answer, so switching
+      // provider does not re-tint the transcript behind it.
+      data-msg-provider={message.provider ?? fallbackProvider}
     >
       <span className="provider-avatar mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/15 shadow-sm backdrop-blur-md">
         <BotIcon className="h-3.5 w-3.5 glass-text-dark" />
@@ -312,10 +318,13 @@ function QuotaDetail({ info }: { info: ChatErrorInfo }) {
 function ErrorRow({
   code,
   info,
+  provider,
   onRetry,
 }: {
   code: ChatErrorCode;
   info: ChatErrorInfo | null;
+  /** The provider that actually failed, so the copy names the right one. */
+  provider: ProviderId;
   onRetry: () => void;
 }) {
   return (
@@ -324,7 +333,9 @@ function ErrorRow({
         <AlertIcon className="h-3.5 w-3.5 glass-text-dark" />
       </span>
       <div className="min-w-0">
-        <p className="text-[12.5px] glass-text-dark">{ERROR_COPY[code]}</p>
+        <p className="text-[12.5px] glass-text-dark">
+          {errorCopy(code, getProviderMeta(provider))}
+        </p>
         {info ? (
           <QuotaDetail
             info={info}
@@ -420,6 +431,7 @@ export function MessageList({
             />
           ) : (
             <AssistantMessage
+              fallbackProvider={provider}
               fresh={isFresh(message.id)}
               key={message.id}
               message={message}
@@ -446,7 +458,12 @@ export function MessageList({
         ) : null}
 
         {error && !needsSetup ? (
-          <ErrorRow code={error} info={errorInfo} onRetry={onRetry} />
+          <ErrorRow
+            code={error}
+            info={errorInfo}
+            onRetry={onRetry}
+            provider={provider}
+          />
         ) : null}
 
         <div ref={endRef} />

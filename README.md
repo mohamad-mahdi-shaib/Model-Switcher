@@ -1,8 +1,12 @@
 # AI Workspace — Creative Model-Switcher Interface
 
 A glassmorphic AI chat interface built for the Numbase Project 1 brief. Next.js
-16 + TypeScript + Tailwind v4, with a live Gemini integration behind a
-provider-neutral abstraction layer.
+16 + TypeScript + Tailwind v4, with Gemini and OpenAI behind a provider-neutral
+abstraction layer.
+
+**Gemini is verified against the live API. OpenAI is implemented and verified
+against mocked upstream responses only** — the account is not funded, so no real
+OpenAI exchange has happened. See "Provider status" below.
 
 Desktop only for this version — mobile is deferred and is not part of the brief.
 
@@ -26,10 +30,37 @@ variables in the running process.
 
 | Name | Required | Purpose |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | yes | Server-side Gemini credential. Never sent to the browser. |
+| `GEMINI_API_KEY` | for Gemini | Server-side Gemini credential. Never sent to the browser. |
 | `GEMINI_MODEL` | no | Defaults to `gemini-3.6-flash` (stable, free tier). |
-| `OPENAI_API_KEY` | no | Reserved. No adapter ships yet — see "Adding a provider". |
+| `OPENAI_API_KEY` | for GPT | Server-side OpenAI credential. Requires a funded account. |
+| `OPENAI_MODEL` | no | Defaults to `gpt-5.6-luna`, the cost-optimised tier. |
 | `ANTHROPIC_API_KEY` | no | Reserved. No adapter ships yet. |
+
+A provider is offered in the UI only when an adapter exists **and** the server
+reports its key present. "Configured" means exactly that: a key is present. It
+does not mean the key is valid, or that the account has credit — neither can be
+known without spending a request.
+
+## Provider status
+
+| Provider | Adapter | Key | Verified |
+| --- | --- | --- | --- |
+| Gemini | ships | `GEMINI_API_KEY` | **against the live API** |
+| GPT | ships | `OPENAI_API_KEY` | **with mocked upstream responses only** — not yet exercised against the live API, because the account is unfunded |
+| Claude | none | — | n/a; disabled in the UI with the reason shown |
+
+### OpenAI setup
+
+1. Create a key at <https://platform.openai.com/api-keys>.
+2. Add credit — the API is not free, and an unfunded account returns HTTP 429
+   with `insufficient_quota`, which the UI reports as a billing problem rather
+   than as a rate limit.
+3. Put the key in `.env.local` as `OPENAI_API_KEY` and restart the dev server.
+
+The adapter targets the Responses API (`POST /v1/responses`, `stream: true`),
+reading incremental text from `response.output_text.delta` events. The default
+model is `gpt-5.6-luna`, chosen from the published pricing as the cheapest
+current text tier; override with `OPENAI_MODEL`.
 
 `.env*` is git-ignored (`.env.example` is the one committed exception). Keys are
 read only inside server adapters, are never prefixed `NEXT_PUBLIC_`, and never
@@ -57,6 +88,7 @@ src/
   server/providers/          SERVER ONLY
     types.ts                 ChatProvider contract, ProviderError
     gemini.ts                the only file importing @google/genai
+    openai.ts                the only file that knows the OpenAI wire format
     registry.ts              id -> adapter dispatch
   components/workspace/      WorkspaceLayout, ChatHeader, ConversationSidebar,
                              MessageList, MessageComposer, Markdown, BackgroundPicker
@@ -164,12 +196,31 @@ and disabled, and cannot originate a request.
 
 ---
 
+## Switching providers
+
+Switching is silent while a conversation is empty — there is no context to
+carry. Once a message exists, changing provider opens a confirmation explaining
+that **every later message sends the whole conversation so far** to the new
+provider, and that replies already on screen keep their original model. Cancel,
+Escape and clicking outside all leave the provider unchanged.
+
+Switching is refused outright while a request is in flight, to pointer and
+keyboard alike: the turn has already left for one provider, and changing the
+selection underneath it would misattribute the answer.
+
+Each assistant message records the provider that produced it, so switching does
+not retroactively re-label earlier answers. A failed turn retries to the
+provider it was originally sent to rather than being silently rerouted.
+
 ## Limitations
 
-- **One live provider.** Only Gemini is connected. Claude and GPT are visible,
-  disabled, and cannot send. Enabling either needs a real key — adapters are
-  deliberately not stubbed, because a stub would either fabricate replies or
-  fail confusingly.
+- **OpenAI is unverified against the live API.** The adapter, its error
+  classification and its streaming are covered by tests that intercept the
+  adapter's own `fetch`, so the code under test is the code that would run. No
+  real OpenAI request has been made. Until the account is funded and a real
+  exchange is observed, treat GPT as implemented-but-unproven.
+- **Claude is not connected.** No adapter ships — deliberately not stubbed,
+  because a stub would either fabricate replies or fail confusingly.
 - **Free-tier quota.** `gemini-3.6-flash` allows 20 requests/day per project on
   the free tier. When exhausted the UI reports the limit, scope and Google's own
   retry delay.
