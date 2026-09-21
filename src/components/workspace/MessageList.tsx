@@ -57,9 +57,10 @@ function UserMessage({ message, fresh }: { message: ChatMessage; fresh: boolean 
       {/* The row holds its final size from the first frame -- the entrance
           animates opacity and a few pixels of transform only, so nothing below
           reflows as the message appears. `relative` is only a containing block
-          for the streak; the min-width is invisible (there is no box) and just
-          keeps the streak a sensible length behind a very short message. */}
-      <div className="relative min-w-[160px] max-w-[min(58ch,520px)]">
+          for the travelling light. No min-width: the wrapper shrinks to the
+          message and its timestamp, so the light traces the content rather
+          than an empty box around it. */}
+      <div className="relative max-w-[min(58ch,520px)]">
         <div className={fresh ? "user-enter" : ""}>
           {/* whitespace-pre-wrap renders newlines without dangerouslySetInnerHTML. */}
           <p className="text-right text-[13.5px] leading-relaxed font-semibold tracking-tight break-words whitespace-pre-wrap glass-text-dark">
@@ -76,7 +77,7 @@ function UserMessage({ message, fresh }: { message: ChatMessage; fresh: boolean 
         {/* Newly sent messages only -- a restored conversation renders without
             this element at all, so there is nothing that could replay. Sibling
             of the animated block, so the approved entrance is unaffected. */}
-        {fresh ? <span aria-hidden="true" className="gold-streak" /> : null}
+        {fresh ? <span aria-hidden="true" className="gold-orbit" /> : null}
       </div>
     </div>
   );

@@ -96,14 +96,19 @@ test("the reveal always terminates and never runs backwards", () => {
 /* --- pacing --------------------------------------------------------------- */
 
 test("pacing never releases enough words to read as a burst", () => {
-  // The property that matters after the 28-words/28ms tier was removed: no
-  // backlog, however large, may dump a paragraph in one step. Six words is the
-  // widest step, so every tick still reads as words appearing.
+  // No backlog, however large, may dump a paragraph in one step, and the
+  // interval floor keeps every group well inside the 900ms fade so the reveal
+  // stays continuous rather than stepping.
   for (const pending of [0, 50, 200, 401, 1201, 5000, 50000]) {
     const p = pace(pending);
-    assert.ok(p.words <= 6, `${pending} chars pending released ${p.words} words`);
-    assert.ok(p.interval >= 120, `${pending} chars pending ticked every ${p.interval}ms`);
+    assert.ok(p.words <= 4, `${pending} chars pending released ${p.words} words`);
+    assert.ok(p.interval >= 300, `${pending} chars pending ticked every ${p.interval}ms`);
   }
+});
+
+test("the base rate is three words every 350ms", () => {
+  assert.deepEqual(pace(0), { words: 3, interval: 350 });
+  assert.deepEqual(pace(120), { words: 3, interval: 350 });
 });
 
 test("pacing relieves as the backlog grows, without accelerating sharply", () => {
@@ -111,12 +116,13 @@ test("pacing relieves as the backlog grows, without accelerating sharply", () =>
   const large = pace(5000);
   assert.ok(large.words >= small.words, "a backlog should not release fewer words");
   assert.ok(large.interval <= small.interval, "a backlog should not tick slower");
-  // Deliberately slower than the previous build: this trial trades drain speed
-  // for a readable reveal, and "Show full response" is the escape hatch for
-  // anyone who does not want to wait. The bound here only guards against a
-  // regression into minutes.
+  // This trial is deliberately slow: a long answer takes around a minute to
+  // reveal in full, and that is the accepted trade for a readable pace. The
+  // assertion records the consequence rather than guarding a speed target --
+  // "Show full response" is what bypasses it.
   const seconds = (5000 / (large.words * 5)) * large.interval / 1000;
-  assert.ok(seconds < 30, `a 5000-character answer would take ${seconds.toFixed(1)}s`);
+  assert.ok(seconds > 30 && seconds < 120,
+    `a 5000-character answer reveals in ${seconds.toFixed(0)}s`);
 });
 
 /* --- run tagging ---------------------------------------------------------- */

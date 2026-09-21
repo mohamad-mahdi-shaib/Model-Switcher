@@ -31,14 +31,19 @@ export function pace(pending: number): { words: number; interval: number } {
   // words, so every step still reads as words appearing rather than a
   // paragraph materialising. Anyone who would rather not wait has "Show full
   // response", which bypasses pacing entirely.
-  // Intervals are kept well under the 500ms per-group fade so that two or
-  // three groups are always mid-fade. If the interval ever approached the fade
+  // Intervals stay well under the 900ms per-group fade so that two or three
+  // groups are always mid-fade. If the interval ever approached the fade
   // duration the reveal would go back to looking like a sequence of settled
-  // steps rather than continuous motion, which is what made the previous
-  // 160ms/300ms pairing imperceptible.
-  if (pending > 1200) return { words: 6, interval: 140 };
-  if (pending > 400) return { words: 4, interval: 175 };
-  return { words: 3, interval: 200 };
+  // steps rather than continuous motion.
+  //
+  // Relief is deliberately shallow here: four words is the widest group and
+  // 300ms the shortest interval, so a long answer stays slow. At roughly 80
+  // characters a second, a 5000-character answer takes about a minute to
+  // reveal in full -- "Show full response" is the way past that, not the
+  // pacing.
+  if (pending > 1200) return { words: 4, interval: 300 };
+  if (pending > 400) return { words: 4, interval: 320 };
+  return { words: 3, interval: 350 };
 }
 
 /** True when an odd number of ``` fences opened before `index`. */

@@ -668,55 +668,90 @@ body {
   animation: user-enter 1200ms cubic-bezier(0.33, 0.12, 0.3, 0.92) backwards;
 }
 
-/* --- One-pass champagne streak -------------------------------------------
-   Accompanies a newly sent message only. It is a sibling of the animated
-   block, not a child, so the entrance above is untouched: same timing, easing,
-   travel and opacity as approved. Absolutely positioned below the sent row, so
-   it sits outside the text area and contributes nothing to layout. One pass,
-   ending at opacity 0, leaving no underline, frame or glow behind.
+/* --- One lap of champagne light -----------------------------------------
+   A short arc of gold travels once, clockwise, around an invisible rounded
+   contour set just outside the message and its timestamp.
+
+   Built as a masked conic-gradient ring rather than an element moved along a
+   path: the mask difference between border-box and content-box leaves a 1.5px
+   band that follows the rounded contour exactly, including the corners, and
+   the conic gradient lights only a short arc of it. Rotating the gradient's
+   start angle sweeps that lit arc around the perimeter. `@property` is what
+   makes the angle interpolate at all -- a plain custom property would jump
+   from 0 to 360 with nothing in between.
+
+   Sibling of the animated block, absolutely positioned, so the approved
+   entrance is untouched and no layout moves. Ends at opacity 0, leaving no
+   border, background or halo behind.
 -------------------------------------------------------------------------- */
 
-@keyframes gold-streak {
+@property --gold-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes gold-orbit-sweep {
+  from {
+    --gold-angle: 0deg;
+  }
+  to {
+    --gold-angle: 360deg;
+  }
+}
+
+/* Separate track so the light can fade in, hold, and be gone by the time the
+   lap closes -- one pass, never a loop that appears to restart. */
+@keyframes gold-orbit-fade {
   0% {
     opacity: 0;
-    transform: translateX(24%) scaleX(0.55);
   }
-  18% {
+  10% {
     opacity: 1;
   }
-  64% {
+  78% {
     opacity: 1;
   }
   100% {
     opacity: 0;
-    transform: translateX(-118%) scaleX(1);
   }
 }
 
-.gold-streak {
+.gold-orbit {
   position: absolute;
-  right: 0;
-  /* Clear of the timestamp row by enough to survive the entrance: the text
-     block is transformed 6px downwards while `user-enter` runs, so at -7px the
-     shifted timestamp reached the streak for the first half-second. Sits in
-     the gap above the next row, so it still costs no layout. */
-  bottom: -14px;
-  width: 38%;
-  height: 2px;
+  /* Clearance, asymmetric for two different constraints. Vertically it has to
+     survive the entrance, which transforms the text block 6px downward while
+     it runs, so -11px still leaves 5px under the timestamp at the worst
+     moment. Horizontally it is bounded by the transcript's own 8px right
+     padding: the message is flush to that edge, so anything wider than 8px is
+     clipped by the scroll container. -7px keeps the whole contour visible. */
+  inset: -11px -7px;
+  border-radius: 16px;
+  padding: 1.5px;
   pointer-events: none;
   opacity: 0;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    rgba(0, 0, 0, 0) 0%,
-    var(--gold-edge) 22%,
-    var(--gold-core) 50%,
-    var(--gold-edge) 78%,
-    rgba(0, 0, 0, 0) 100%
+  background: conic-gradient(
+    from var(--gold-angle) at 50% 50%,
+    rgba(0, 0, 0, 0) 0deg,
+    var(--gold-edge) 12deg,
+    var(--gold-core) 25deg,
+    var(--gold-edge) 38deg,
+    rgba(0, 0, 0, 0) 54deg,
+    rgba(0, 0, 0, 0) 360deg
   );
-  /* Feathers the ends; no spread, so it cannot read as a glow. */
-  filter: blur(0.6px);
-  animation: gold-streak 1000ms cubic-bezier(0.32, 0, 0.2, 1) 250ms 1 both;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  /* Feathers the arc; no spread, so it cannot read as a halo. */
+  filter: blur(0.7px);
+  animation:
+    gold-orbit-sweep 2000ms linear 250ms 1 both,
+    gold-orbit-fade 2000ms linear 250ms 1 both;
 }
 
 /* --- Assistant arrival: three soft stages --------------------------------- */
@@ -781,13 +816,14 @@ body {
      300ms ease-out     50% at 105ms   76% visible   <- previous
      500ms ease-out     50% at 175ms   76% visible
      500ms ease-in-out  50% at 175ms   57% visible
-     500ms linear       50% at 250ms   90% visible   <- chosen
+     500ms linear       50% at 250ms   90% visible   <- shape chosen
 
-   Linear is the most perceptible shape for a pure opacity change, and at 500ms
-   against a 200ms group interval two or three groups are always mid-fade, so
-   the reveal reads as continuous rather than as a series of settled steps. */
+   Linear is the most perceptible shape for a pure opacity change. The duration
+   is now 900ms against a 350ms group interval, so roughly three groups are
+   always mid-fade and each individual word takes almost a second to reach full
+   strength. */
 .reveal-run {
-  animation: reveal-run 500ms linear backwards;
+  animation: reveal-run 900ms linear backwards;
 }
 
 /* --- The assistant pane --------------------------------------------------
@@ -1065,7 +1101,7 @@ body {
   .reveal-run {
     animation: none;
   }
-  .gold-streak {
+  .gold-orbit {
     display: none;
   }
   /* No height collapse either: the row just fades. */
