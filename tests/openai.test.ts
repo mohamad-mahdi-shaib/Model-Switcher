@@ -480,3 +480,44 @@ test("SSE parsing skips the [DONE] sentinel and malformed lines", async () => {
   }
   assert.deepEqual(seen, ["a", "b"]);
 });
+
+test("the request bounds its output and turns reasoning off", async () => {
+  const mock = mockUpstream(() =>
+    sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      await collect(stream);
+      const body = JSON.parse(String(mock.calls[0].init.body));
+      // A cap is sent, and it is the documented Responses API field name.
+      assert.equal(typeof body.max_output_tokens, "number");
+      assert.ok(body.max_output_tokens > 0 && body.max_output_tokens <= 128_000);
+      // On a reasoning model the cap alone is a trap: reasoning tokens spend
+      // the same budget and can exhaust it before any visible text. Effort
+      // must be off for a small cap to be safe.
+      assert.equal(body.reasoning?.effort, "none");
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a response truncated by the token cap keeps the text it delivered", async () => {
+  const mock = mockUpstream(() =>
+    sse(
+      { type: "response.output_text.delta", delta: "a partial " },
+      { type: "response.output_text.delta", delta: "answer" },
+      { type: "response.incomplete", response: { status: "incomplete" } },
+    ),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      // Ending cleanly, not throwing: a truncated answer is still an answer.
+      assert.equal(await collect(stream), "a partial answer");
+    });
+  } finally {
+    mock.restore();
+  }
+});

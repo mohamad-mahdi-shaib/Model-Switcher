@@ -1,15 +1,17 @@
 # Requirements audit — Numbase Project 1: Creative Model-Switcher Interface
 
 **Audited against:** `references/Project 1_ Model-Switcher AI Interface .pdf` (read in full)
-**Date:** 2026-09-21 · **Post-implementation** (through milestone 13: OpenAI as the second provider)
-**Method:** PDF re-read, code inspection, `npm test` (83 unit / contract / adapter tests) and browser acceptance suites at **1366×768**.
+**Date:** 2026-09-21 · **Post-implementation** (through milestone 14: live acceptance of both providers)
+**Method:** PDF re-read, code inspection, `npm test` (85 unit / contract / adapter tests), browser acceptance suites at **1366×768**, and one **live** end-to-end run against both real APIs.
 
-**Provider verification state at this revision:** Gemini is verified against the live API. **OpenAI is implemented and verified against mocked upstream responses only** — the account is unfunded and no real OpenAI request has been made. R14 is deliberately left open on that basis.
+**Provider verification state at this revision:** **both providers are verified against their live APIs.** A single acceptance run streamed real answers from GPT and Gemini inside one conversation, carried a planted fact across three intervening turns and then across a provider switch, and survived a refresh. **7 upstream generation attempts were spent in total** (GPT 4, Gemini 2, plus 1 more GPT turn to record token usage), against 8 authorised. R14 is now closed on live evidence.
+
+**What is still NOT live-verified:** the provider *error* paths. `INVALID_KEY`, `INSUFFICIENT_CREDIT`, `RATE_LIMIT` and `MODEL_BUSY` remain covered by [ADAPTER-MOCK] only, because provoking them for real means damaging the account or waiting for a genuine outage. That gap is stated per requirement below rather than folded into a pass.
 
 **Evidence labels**
 - **[MOCKED]** — browser suite with all model traffic stubbed at `window.fetch`. No request reached Google; no quota consumed.
 - **[UNIT]** — `npm test`. No network.
-- **[LIVE]** — a real Gemini request. Exactly **one** was made this pass, to verify the refactored provider path.
+- **[LIVE]** — a real request to a real provider API, driven through the actual UI in a real browser with **no mock installed anywhere**. **7** upstream generation attempts were made this pass, counted from the dev-server log rather than assumed.
 - **[ADAPTER-MOCK]** — the real adapter run against a mocked *upstream*: the adapter's own `fetch` is intercepted, so its SSE parsing, delta normalisation, abort handling and error classification are the code under test. Distinct from [MOCKED], which stubs the browser's `fetch` and never reaches adapter code at all.
 - **⚠️ NOT LIVE-VERIFIED** — implemented and covered by tests, but never exercised against the real provider.
 - **Static** — code read, `grep`, `git` history.
@@ -101,12 +103,14 @@
 - **PDF:** §5.1 — "**A prominent, stylish selector.**"
 - **Status: Complete** *(was Partial — one selectable option)*
 - **Code:** `ChatHeader.tsx` — glass `role="radiogroup"`, top-right, plus a `.provider-model` readout.
-- **Does:** All three providers render; the active one is accented and the model in use is shown beside it. Availability is decided by the **server** probe, so a provider without a key cannot be chosen. Selecting a provider issues no request.
+- **Does:** Both reachable providers render; the active one is accented and the model actually in use is shown beside it, read from the server probe rather than hardcoded. Availability is decided by the **server**, so a provider without a key cannot be chosen. Selecting a provider issues no request.
 - **Evidence:**
-  - [MOCKED] `[{Gemini, disabled:false, checked:true}, {Claude, disabled:true, title:"…no ANTHROPIC_API_KEY…"}, {GPT, disabled:false}]`.
+  - [MOCKED] `[{gemini, disabled:false, checked:true}, {gpt, disabled:false}]` — **two** chips, and no Claude control of any kind.
   - [MOCKED] Clicking GPT left `window.__mock.requests` at **0** — selection is not a request.
-- **Gap:** None. Claude remains honestly disabled with its reason surfaced.
-- **Test:** Two providers selectable, each routing to its own adapter; Claude disabled with a stated reason.
+  - [LIVE] With both real keys present the selector rendered exactly `["Gemini","GPT"]`, and selecting GPT set the readout to **`gpt-5.6-luna`** — the real id, matching what the adapter sent.
+- **Gap:** None.
+- **Changed in milestone 14:** the permanently-disabled Claude chip was removed. It could never answer, so as a control it was noise, and "Coming soon" over something with neither key nor adapter is a promise the product cannot keep. The extensibility it was standing in for is unaffected: a provider is still one adapter, one `ProviderId` member, one `PROVIDERS` entry and one registry line.
+- **Test:** Two providers selectable, each routing to its own adapter; no inert third control.
 
 ### R7 — Model lock OR warning before switching after a chat starts
 - **PDF:** §5.1 — "**Crucial:** Once a chat starts, **lock the model or show a creative warning before switching.**"
@@ -120,6 +124,7 @@
   - [MOCKED] During an in-flight request the other chip reports `disabled=true`, `aria-disabled="true"`, is **not focusable**, and neither a click nor Enter/Space changes the selection or opens the dialog.
   - [MOCKED] After a switch the next turn is sent with `provider: "gpt"` carrying **3** messages — the whole history — while the earlier answer stays attributed to Gemini.
   - [MOCKED] A failed turn retried three times reports `sent=[gpt,gpt,gpt]`: a failure is never silently rerouted to the other provider.
+  - [LIVE] In the real run, after four GPT turns, clicking Gemini opened the dialog reading *"This conversation has already started with GPT. Every later message will send the whole conversation so far to Gemini…"*. **Cancel** left `data-provider=gpt` and the readout at `gpt-5.6-luna`; clicking again and confirming moved it to `gemini` / `gemini-3.6-flash`. The warning is not a mock artefact.
 - **Gap:** None.
 - **Test:** Send a message, click the other provider → dialog; Cancel/Escape leave it unchanged; Confirm updates it. Try to switch mid-stream → refused.
 
@@ -149,6 +154,7 @@
 - **Evidence:**
   - [MOCKED] three conversations created → **hard refresh** → all three still listed, active conversation restored ("Conversation ONE about apples"), transcript complete (5 user messages).
   - [UNIT] round-trip; malformed JSON → `corrupt` with bytes intact; version 99 → `corrupt`, untouched; `streaming` → `interrupted` with partial text preserved; quota-full → `full`; absent storage → `unavailable`.
+  - [LIVE] After a mixed-provider conversation of five real answers, a reload restored **5 answers**, the selected provider (`gemini`), the model readout (`gemini-3.6-flash`), the per-message attribution `[gpt, gpt, gpt, gpt, gemini]` and the real GPT answer text ("Perseus").
 - **Gap:** Local to one browser; no cross-device sync. The PDF asks only for survival across refresh.
 - **Test:** Send two messages, hard-refresh (Ctrl+Shift+R); transcript and sidebar entry both persist.
 
@@ -157,7 +163,10 @@
 - **Status: Complete**
 - **Code:** `use-conversations.ts` `send`/`retry` build history from the **active conversation only**; `route.ts` validates; `gemini.ts` maps to `Content[]`.
 - **Does:** Each turn sends that conversation's full history (cap 50).
-- **Evidence:** [MOCKED] final request carried **7 messages**; contents contained only "apples" material — no "bridges" or "clouds" from sibling conversations. [LIVE, earlier session] Gemini resolved "its population" → "Tokyo: 14,040,732".
+- **Evidence:**
+  - [MOCKED] final request carried **7 messages**; contents contained only "apples" material — no "bridges" or "clouds" from sibling conversations.
+  - [LIVE] **GPT, across three intervening user turns.** Turn 1 planted "my bicycle is named Perseus" (answer: *"noted"*). Turns 2 and 3 were unrelated (*"41"*, *"Red"*). Turn 4 asked "What is my bicycle named?" without repeating it — GPT answered **"Perseus"**.
+  - [LIVE] **Across a provider switch.** After switching to Gemini, a turn asking for both facts returned *"Your bicycle is named Perseus, and the sum was 17 plus 24."* — Gemini answering from history it never generated.
 - **Gap:** None.
 - **Test:** State a fact, send three unrelated messages, ask about the fact; the outgoing request still contains the original message.
 
@@ -181,18 +190,25 @@
 
 ### R14 — Actual support for multiple AI providers
 - **PDF:** §3 "different AIs"; §4 "Gemini or GPT-4"; §2 "switch between GPT-4 and Gemini".
-- **Status: Implemented — ⚠️ NOT LIVE-VERIFIED**
+- **Status: Complete — live-verified on both providers**
 - **Code:** `src/server/providers/openai.ts` (the only file that knows the OpenAI wire format); `registry.ts` registers `gpt`; `providers.ts` marks GPT enabled; `chat.ts` gains `INSUFFICIENT_CREDIT` and provider-aware error copy.
-- **Does:** Targets the Responses API (`POST /v1/responses`, `stream: true`), reading `response.output_text.delta`. Model defaults to `gpt-5.6-luna`, the cheapest current text tier per published pricing, overridable with `OPENAI_MODEL`. The whole conversation is sent each turn. Abort propagates to `fetch`. Vendor errors are normalised into the shared vocabulary, and **billing exhaustion is separated from throttling** even though both arrive as HTTP 429.
+- **Does:** Targets the Responses API (`POST /v1/responses`, `stream: true`), reading `response.output_text.delta`. Model defaults to `gpt-5.6-luna`, overridable with `OPENAI_MODEL`. The whole conversation is sent each turn. Abort propagates to `fetch`. Vendor errors are normalised into the shared vocabulary, and **billing exhaustion is separated from throttling** even though both arrive as HTTP 429.
+- **Model choice, re-verified 2026-09-21 against the published docs (not recalled):** `gpt-5.6-luna` exists under that exact id and is the cheapest current text tier at $0.20/$1.20 per MTok, against $2/$12 (Terra), $4/$20 (Sol) and $10/$50 (Astra). **Nothing was upgraded to a dearer model.** The brief says "GPT-4"; that generation is no longer the current API surface, so the selector names the vendor (**GPT**) and the header prints the exact model id beside it, read from the server. No UI text claims GPT-4.
+- **Output bounding:** `max_output_tokens: 1200` caps a turn, and `reasoning: { effort: "none" }` is what makes that cap safe — Luna is a reasoning model defaulting to `medium`, and reasoning tokens are billed as output **and** spend the same budget, so a capped request can finish `incomplete` with no visible text at all. Verified upstream, not merely asserted: see the live usage line below.
 - **Evidence:**
   - [ADAPTER-MOCK] Deltas normalise and concatenate; non-text events are ignored; an empty answer yields zero deltas rather than throwing.
   - [ADAPTER-MOCK] A 7-message history is sent in order with roles mapped, including **four** user turns; the key travels only in the `Authorization` header and never in the body; `availability()` never contains the key value.
   - [ADAPTER-MOCK] The abort signal reaches `fetch`; aborting mid-stream stops delivery without throwing. A mid-stream `error` event throws `MODEL_BUSY` **after** already-delivered text is preserved.
   - [ADAPTER-MOCK] `401 → INVALID_KEY` (not retryable). `429` with `credit_balance_exhausted` / `organization_spend_limit_exceeded` / `project_spend_limit_exceeded` / `organization_usage_limit_exceeded` → `INSUFFICIENT_CREDIT` (**not** retryable). `429 rate_limit_error` → `RATE_LIMIT` with `Retry-After: 12` read back. `503 → MODEL_BUSY` (retryable), `500 → UPSTREAM` (retryable), `400/404 → BAD_REQUEST`, `403 → INVALID_KEY`. A missing key fails **before** any request is attempted (0 calls).
   - [ADAPTER-MOCK] SSE parsing survives a chunk boundary splitting a JSON payload mid-key, and skips `[DONE]` and malformed lines.
+  - [ADAPTER-MOCK] The request carries `max_output_tokens` within range and `reasoning.effort === "none"`; a `response.incomplete` event (the token cap) ends the stream cleanly and **keeps** the text already delivered rather than replacing a truncated answer with an error.
   - [MOCKED] In the browser: GPT selectable, a turn routes to it, Stop/Retry/Copy work, and a GPT failure reports **"GPT could not complete that request."** — not Gemini.
-- **Gap:** **No real OpenAI request has ever been made.** The account is unfunded, and live verification was not authorised. Everything above tests the adapter's own code against mocked upstream bytes; it does not prove the key is valid, the model id is accepted, or that the live SSE stream matches the documented shape.
-- **Test (live, pending):** fund the account, then send one prompt to each provider in separate conversations and confirm two genuine, different replies.
+  - **[LIVE] Real GPT generation.** Four consecutive GPT turns streamed and completed with actual text — `"noted"`, `"41"`, `"Red"`, `"Perseus"` — each rendered in the transcript and each tagged `data-msg-provider="gpt"`. HTTP 200 alone was **not** treated as success: every check reads the rendered answer text.
+  - **[LIVE] Real Gemini generation in the same conversation**, after a confirmed switch: *"Your bicycle is named Perseus, and the sum was 17 plus 24."*
+  - **[LIVE] Real token usage**, logged server-side from `response.completed`: `{ model: 'gpt-5.6-luna', input: 14, output: 5, reasoning: 0 }`. `reasoning: 0` is the upstream confirmation that `effort: "none"` was honoured — the request body alone could not prove that.
+  - **[LIVE] Cost accounting.** 7 upstream generation attempts total, counted from the dev-server log: 5 user sends that streamed, 1 further GPT send for the usage reading, and **1 failed Gemini attempt** (`code: NETWORK`, a transport fault) that the route's retry policy recovered on its next attempt. 6 POSTs, 7 attempts. No auth, billing or quota failure occurred.
+- **Gap:** The live **error** paths are still unproven. `INVALID_KEY`, `INSUFFICIENT_CREDIT`, `RATE_LIMIT` and `MODEL_BUSY` are [ADAPTER-MOCK] only — provoking them for real means damaging the account or waiting for a genuine outage. The happy path, the key, the model id and the live SSE shape are now proven for both providers.
+- **Test (live, done):** send one prompt to each provider in the same conversation and confirm two genuine replies, then check the header model id matches what the adapter sent.
 
 ### R15 — Consistent normalized response and error contracts
 - **PDF:** §6 Step 2 — "Every response from your backend should look exactly the same… **Normalization**."
@@ -247,30 +263,40 @@
 ## 3. Status summary
 
 ### A. Completed PDF requirements
-R1 premium design · R2 entrance motion · R3 typing indicator · R5 user/AI distinction · R8 welcome state · R9 sidebar history · **R10 persistence across refresh** · R11 context depth · R12 frontend/backend split · **R13 provider abstraction** · R15 normalized contracts · R16 key security.
+R1 premium design · R2 entrance motion · R3 typing indicator · R4 per-model identity · R5 user/AI distinction · R6 model selector · R7 switch warning · R8 welcome state · R9 sidebar history · **R10 persistence across refresh** · R11 context depth · R12 frontend/backend split · **R13 provider abstraction** · **R14 multiple real providers — now live-verified** · R15 normalized contracts · R16 key security.
+
+**All sixteen PDF requirements are now closed.**
 
 ### B. Completed optional enhancements (ours, not required)
 See Appendix A.
 
 ### C. Remaining blockers
-1. **R14 — live OpenAI acceptance.** The adapter is written, registered and covered by adapter-level tests against mocked upstream responses, but **no real OpenAI request has been made**: the account is unfunded and live verification was not authorised. Until one real exchange succeeds, GPT is implemented, not proven.
-2. **Key rotation** before submission — both the Gemini key and the OpenAI key were pasted into chat transcripts during setup.
+1. **Key rotation — the one true submission blocker.** Both the Gemini key and the OpenAI key were pasted into chat transcripts during setup. Rotate both before the project is handed over. Neither is committed (`.env*` is git-ignored and `.env.local` is untracked), but a key that has been pasted into a transcript should be treated as disclosed.
+
+No requirement is now blocked. R14, the last one open, closed on live evidence this pass.
+
+### C2. Known gaps that are NOT blockers
+1. **Live error paths unproven.** `INVALID_KEY`, `INSUFFICIENT_CREDIT`, `RATE_LIMIT` and `MODEL_BUSY` are verified only against mocked upstream responses. Proving them live means damaging the account or waiting for a real outage.
+2. **One live pass, not a soak test.** 7 upstream attempts is enough to prove the path, not to characterise reliability. One of those 7 was a transport `NETWORK` failure that the retry policy absorbed — real, handled, and a reminder that one user-visible turn can cost more than one upstream attempt.
+3. **Mobile deferred**, as the brief allows.
 
 ### D. Verified-with-mocks vs verified-live
 
 | Requirement | Implemented | Mocked verification | Live verification |
 | --- | --- | --- | --- |
 | Gemini end to end (R11–R13) | yes | yes | **yes** |
-| OpenAI adapter (R14) | yes | yes — [ADAPTER-MOCK] against mocked upstream | **no — pending funding** |
-| Switching warning (R7) | yes | yes — Cancel/Escape/Confirm/in-flight refusal | not required (UI-only) |
-| Provider identity (R4, R6) | yes | yes — accent, model readout, per-message attribution | not required (UI-only) |
+| OpenAI happy path (R14) | yes | yes — [ADAPTER-MOCK] against mocked upstream | **yes** — 4 real streamed GPT answers + real token usage |
+| OpenAI error classification (R14, R15) | yes | yes — 401/403/429-billing/429-throttle/500/503/400 | **no** — cannot be provoked without damaging the account |
+| Cross-provider context (R11) | yes | yes — full history forwarded | **yes** — Gemini answered from GPT's transcript |
+| Switching warning (R7) | yes | yes — Cancel/Escape/Confirm/in-flight refusal | **yes** — warned, Cancel kept GPT, Confirm switched |
+| Persistence + identity (R4, R6, R10) | yes | yes — accent, model readout, per-message attribution | **yes** — survived a real refresh with `[gpt,gpt,gpt,gpt,gemini]` |
 
-Nothing in this table is marked complete on the strength of mocked tests alone: R14's live column stays open deliberately.
+Nothing here is marked complete on the strength of mocked tests alone, and nothing live-verified is claimed from an HTTP 200: every live row was checked against the answer text actually rendered.
 
 ### Verdict
 The model-switcher premise can now be shown switching: two adapters are registered, the selector offers both, the confirmation gate has been exercised end to end, and provider identity is carried per message so a mixed transcript stays honest about which model said what. R4, R6 and R7 are closed.
 
-R14 is the one requirement that mocked tests cannot close. The OpenAI adapter is implemented and its own code is under test, but it has never spoken to OpenAI. That stays marked pending until the account is funded and a live exchange is explicitly authorised.
+R14 is now closed too. GPT and Gemini both answered for real, in one conversation, with the planted fact surviving three intervening turns and then a provider switch, and with each answer keeping the identity of the model that produced it through a refresh. What remains unproven is deliberate and stated: the live error paths, which cannot be provoked without damaging the account.
 
 ---
 

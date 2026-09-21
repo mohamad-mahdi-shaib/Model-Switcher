@@ -10,8 +10,10 @@ import type { ChatProvider } from "@/server/providers/types";
  * line here. The API route never learns a vendor name.
  *
  * Anthropic is intentionally absent rather than stubbed: an adapter that cannot
- * reach a real model would either fabricate replies or fail confusingly. It
- * stays unavailable until a real key exists.
+ * reach a real model would either fabricate replies or fail confusingly. It is
+ * absent from the client-side PROVIDERS list too, so the selector never offers
+ * a control that cannot answer. Adding it later is an adapter file, one line
+ * here, and one entry in src/lib/providers.ts.
  *
  * Registration alone does not make a provider usable. Each adapter's
  * availability() decides that from whether its key is present on the server,
@@ -21,7 +23,8 @@ import type { ChatProvider } from "@/server/providers/types";
 const REGISTRY: Partial<Record<ProviderId, ChatProvider>> = {
   gemini: geminiProvider,
   gpt: openaiProvider,
-  // anthropic: anthropicProvider <- requires ANTHROPIC_API_KEY
+  // claude: anthropicProvider <- needs the adapter, a ProviderId member,
+  //                               a PROVIDERS entry and ANTHROPIC_API_KEY
 };
 
 export function getProvider(id: string): ChatProvider | null {

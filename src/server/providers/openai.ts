@@ -13,23 +13,52 @@ import {
  * no dependency it did not need. Nothing outside this file learns the endpoint,
  * the event names or the error vocabulary.
  *
- * Chosen from the current documentation on 2026-09-21, not from memory:
+ * Chosen from the current documentation, not from memory, and re-checked
+ * against it on 2026-09-21 before the first live call:
  *   - Model: gpt-5.6-luna, the cost-optimised tier at $0.20/$1.20 per MTok,
- *     against $2/$12 for Terra and $10/$50 for Astra. Cheapest current text
- *     model, and the docs describe it as intended for "cost-sensitive,
- *     high-volume workloads".
- *     https://developers.openai.com/api/docs/models
+ *     against $2/$12 for Terra, $4/$20 for Sol and $10/$50 for Astra. Still
+ *     the cheapest current text model, and the docs describe it as intended
+ *     for "cost-sensitive, high-volume workloads". Confirmed present under
+ *     that exact id; nothing here was upgraded to a dearer tier.
+ *     https://developers.openai.com/api/docs/models/gpt-5.6-luna
  *   - Streaming: POST /v1/responses with `stream: true`, which emits semantic
  *     SSE events; incremental text arrives as `response.output_text.delta`
  *     with the text in `delta`.
  *     https://developers.openai.com/api/docs/guides/streaming-responses
+ *   - Reasoning and token budget:
+ *     https://developers.openai.com/api/docs/guides/reasoning
  *   - Errors: https://developers.openai.com/api/docs/guides/error-codes
  *
- * No endpoint was contacted to discover or verify any of this.
+ * Only documentation pages were read. No model endpoint was contacted to
+ * discover or verify any of this.
  */
 
 const DEFAULT_MODEL = "gpt-5.6-luna";
 const ENDPOINT = "https://api.openai.com/v1/responses";
+
+/**
+ * Bounded answer length. `max_output_tokens` caps everything the model
+ * generates for one turn, so a runaway reply cannot quietly run up a bill.
+ * Generous enough for a full chat answer, far short of the model's 128k
+ * ceiling.
+ */
+const MAX_OUTPUT_TOKENS = 1200;
+
+/**
+ * Reasoning off -- and this is the part that makes the cap above safe.
+ *
+ * gpt-5.6-luna is a reasoning model and defaults to `medium` effort. Reasoning
+ * tokens are billed as output AND spend the same `max_output_tokens` budget,
+ * so a capped request can finish `incomplete` having produced no visible text
+ * at all: paid for, blank on screen. The docs suggest reserving ~25k tokens
+ * when reasoning is on, which is the opposite of what a chat reply needs.
+ * `none` is supported by this model, removes that cost entirely, and suits an
+ * interface whose value is a fast, streaming, conversational answer.
+ *
+ * A model set through OPENAI_MODEL that does not accept `none` (GPT-6 Astra,
+ * for one) needs this raised to `low` and the cap raised with it.
+ */
+const REASONING_EFFORT = "none";
 
 function model(): string {
   return process.env.OPENAI_MODEL?.trim() || DEFAULT_MODEL;
@@ -151,6 +180,29 @@ export async function* parseSse(
   }
 }
 
+/**
+ * One line of cost observability, server-side only.
+ *
+ * Token counts are the one way to confirm from outside the process that the
+ * request options above actually took effect upstream -- in particular that
+ * reasoning is off, which shows up here as `reasoning: 0` rather than being
+ * merely asserted about the request body. Counts only: no prompt text, no
+ * answer text, no credentials.
+ */
+function logUsage(response: unknown): void {
+  const usage = (response as { usage?: Record<string, unknown> } | undefined)?.usage;
+  if (!usage) return;
+  const details = usage.output_tokens_details as
+    | { reasoning_tokens?: number }
+    | undefined;
+  console.info("[openai] usage", {
+    model: model(),
+    input: usage.input_tokens,
+    output: usage.output_tokens,
+    reasoning: details?.reasoning_tokens ?? 0,
+  });
+}
+
 /** Reads an error body without ever surfacing raw provider text to the user. */
 async function readErrorBody(response: Response): Promise<OpenAiErrorBody | null> {
   try {
@@ -196,7 +248,13 @@ export const openaiProvider: ChatProvider = {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ model: model(), input, stream: true }),
+        body: JSON.stringify({
+          model: model(),
+          input,
+          stream: true,
+          max_output_tokens: MAX_OUTPUT_TOKENS,
+          reasoning: { effort: REASONING_EFFORT },
+        }),
         signal,
       });
     } catch (error) {
@@ -234,7 +292,14 @@ export const openaiProvider: ChatProvider = {
             if (typeof text === "string" && text) yield { text };
             continue;
           }
-          if (type === "response.completed") return;
+          if (type === "response.completed") {
+            logUsage(event.response);
+            return;
+          }
+          // `incomplete` means the token cap was reached. Whatever streamed
+          // before it is a real, if truncated, answer -- ending cleanly keeps
+          // it, where raising an error here would replace it with a banner.
+          if (type === "response.incomplete") return;
           if (type === "error" || type === "response.failed") {
             // A fault raised partway through, after text may already have been
             // delivered. NDJSON lets the route report it without discarding

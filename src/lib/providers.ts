@@ -7,9 +7,16 @@
  * keys are configured. A provider is offered to the user only when both agree.
  *
  * A disabled provider must never produce a response — real or simulated.
+ *
+ * Only providers this app can actually reach are listed. Anthropic was dropped
+ * from the selector rather than shown permanently greyed out: an inert control
+ * is noise, and "Coming soon" over something with no key and no adapter is a
+ * promise the product cannot keep. Nothing about the architecture changed --
+ * adding a provider is still one member of ProviderId, one entry below, one
+ * adapter implementing ChatProvider, and one line in the server registry.
  */
 
-export type ProviderId = "gemini" | "claude" | "gpt";
+export type ProviderId = "gemini" | "gpt";
 
 export type Provider = {
   id: ProviderId;
@@ -24,13 +31,6 @@ export type Provider = {
 
 export const PROVIDERS: readonly Provider[] = [
   { id: "gemini", label: "Gemini", enabled: true, accent: "#6f7f9b" },
-  {
-    id: "claude",
-    label: "Claude",
-    enabled: false,
-    note: "Not connected — no ANTHROPIC_API_KEY configured on the server.",
-    accent: "#a8764e",
-  },
   {
     id: "gpt",
     label: "GPT",

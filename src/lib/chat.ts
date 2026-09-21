@@ -114,8 +114,12 @@ export const ERROR_COPY: Record<ChatErrorCode, string> = {
 const KEY_NAME: Record<string, string> = {
   gemini: "GEMINI_API_KEY",
   gpt: "OPENAI_API_KEY",
-  claude: "ANTHROPIC_API_KEY",
 };
+
+/** The env var a provider's key is read from. Never the value itself. */
+export function providerKeyName(id: string): string {
+  return KEY_NAME[id] ?? "the provider API key";
+}
 
 /** Resolves the copy for a code against the provider that actually failed. */
 export function errorCopy(
@@ -124,7 +128,7 @@ export function errorCopy(
 ): string {
   return ERROR_COPY[code]
     .replaceAll("{provider}", provider.label)
-    .replaceAll("{key}", KEY_NAME[provider.id] ?? "the provider API key");
+    .replaceAll("{key}", providerKeyName(provider.id));
 }
 
 export function toWire(messages: readonly ChatMessage[]): WireMessage[] {

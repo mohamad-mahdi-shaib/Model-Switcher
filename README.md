@@ -4,9 +4,10 @@ A glassmorphic AI chat interface built for the Numbase Project 1 brief. Next.js
 16 + TypeScript + Tailwind v4, with Gemini and OpenAI behind a provider-neutral
 abstraction layer.
 
-**Gemini is verified against the live API. OpenAI is implemented and verified
-against mocked upstream responses only** — the account is not funded, so no real
-OpenAI exchange has happened. See "Provider status" below.
+**Both providers are now verified against their live APIs.** An end-to-end
+acceptance run on 2026-09-21 streamed real answers from GPT and Gemini in one
+conversation, carried context across providers, and survived a refresh. See
+"Provider status" below.
 
 Desktop only for this version — mobile is deferred and is not part of the brief.
 
@@ -33,8 +34,7 @@ variables in the running process.
 | `GEMINI_API_KEY` | for Gemini | Server-side Gemini credential. Never sent to the browser. |
 | `GEMINI_MODEL` | no | Defaults to `gemini-3.6-flash` (stable, free tier). |
 | `OPENAI_API_KEY` | for GPT | Server-side OpenAI credential. Requires a funded account. |
-| `OPENAI_MODEL` | no | Defaults to `gpt-5.6-luna`, the cost-optimised tier. |
-| `ANTHROPIC_API_KEY` | no | Reserved. No adapter ships yet. |
+| `OPENAI_MODEL` | no | Defaults to `gpt-5.6-luna`, the cost-optimised tier. See "Which OpenAI model" below before overriding it. |
 
 A provider is offered in the UI only when an adapter exists **and** the server
 reports its key present. "Configured" means exactly that: a key is present. It
@@ -46,8 +46,14 @@ known without spending a request.
 | Provider | Adapter | Key | Verified |
 | --- | --- | --- | --- |
 | Gemini | ships | `GEMINI_API_KEY` | **against the live API** |
-| GPT | ships | `OPENAI_API_KEY` | **with mocked upstream responses only** — not yet exercised against the live API, because the account is unfunded |
-| Claude | none | — | n/a; disabled in the UI with the reason shown |
+| GPT | ships | `OPENAI_API_KEY` | **against the live API** — real streamed answers, real token usage |
+
+Only providers the app can actually reach are offered. Anthropic has no adapter
+and is not listed in the selector: a permanently inert control is noise, and
+"Coming soon" over something with no key and no adapter is a promise the product
+cannot keep. Adding it later is one adapter file, one `ProviderId` member, one
+`PROVIDERS` entry and one line in the server registry — the same four-line change
+any new provider takes.
 
 ### OpenAI setup
 
@@ -58,9 +64,37 @@ known without spending a request.
 3. Put the key in `.env.local` as `OPENAI_API_KEY` and restart the dev server.
 
 The adapter targets the Responses API (`POST /v1/responses`, `stream: true`),
-reading incremental text from `response.output_text.delta` events. The default
-model is `gpt-5.6-luna`, chosen from the published pricing as the cheapest
-current text tier; override with `OPENAI_MODEL`.
+reading incremental text from `response.output_text.delta` events.
+
+### Which OpenAI model, and why it is not "GPT-4"
+
+The brief's wording is "GPT-4". That model generation is no longer the current
+API surface, so following the words literally would have meant shipping against
+a superseded model. The selector therefore says **GPT** — the vendor, which is
+what the brief is really asking for — and the exact model id in use is printed
+next to it in the header, read from the server rather than hardcoded in the UI.
+There is no wording anywhere that claims GPT-4.
+
+The default is **`gpt-5.6-luna`**, re-checked against the published model and
+pricing pages on 2026-09-21 rather than recalled: $0.20/$1.20 per MTok against
+$2/$12 for Terra, $4/$20 for Sol and $10/$50 for Astra. It is the cheapest
+current text tier, and the one the docs describe as intended for
+"cost-sensitive, high-volume workloads". Nothing was quietly upgraded to a
+dearer model.
+
+Two request options follow from that choice, and they belong together:
+
+- `max_output_tokens: 1200` bounds one turn, so a runaway reply cannot run up a
+  bill.
+- `reasoning: { effort: "none" }` is what makes that cap safe. Luna is a
+  reasoning model defaulting to `medium`, and reasoning tokens are billed as
+  output **and** spend the same `max_output_tokens` budget — so a capped
+  request can finish `incomplete` having produced no visible text at all: paid
+  for, blank on screen. `none` removes that cost entirely. Live usage confirms
+  it took effect upstream: `input: 14, output: 5, reasoning: 0`.
+
+A model set through `OPENAI_MODEL` that does not accept `effort: "none"` (GPT-6
+Astra, for one) needs that raised to `"low"` and the cap raised with it.
 
 `.env*` is git-ignored (`.env.example` is the one committed exception). Keys are
 read only inside server adapters, are never prefixed `NEXT_PUBLIC_`, and never
@@ -245,13 +279,20 @@ provider it was originally sent to rather than being silently rerouted.
 
 ## Limitations
 
-- **OpenAI is unverified against the live API.** The adapter, its error
-  classification and its streaming are covered by tests that intercept the
-  adapter's own `fetch`, so the code under test is the code that would run. No
-  real OpenAI request has been made. Until the account is funded and a real
-  exchange is observed, treat GPT as implemented-but-unproven.
+- **Live verification is one pass, not a soak test.** Both providers answered
+  for real on 2026-09-21 across 7 upstream attempts. That proves the keys, the
+  model ids, the live SSE shapes and the cross-provider context path. It does
+  not exercise the live *error* paths: `INVALID_KEY`, `INSUFFICIENT_CREDIT`,
+  `RATE_LIMIT` and `MODEL_BUSY` are still verified only against mocked upstream
+  responses, because provoking them for real means damaging the account or
+  waiting for a genuine outage.
+- **One live retry was observed.** A Gemini attempt failed with a transport
+  `NETWORK` fault and the route's retry policy recovered it on the next attempt.
+  Real, and handled — but it means a single user-visible turn can cost more than
+  one upstream attempt.
 - **Claude is not connected.** No adapter ships — deliberately not stubbed,
-  because a stub would either fabricate replies or fail confusingly.
+  because a stub would either fabricate replies or fail confusingly — and as of
+  this revision it is no longer shown in the selector at all.
 - **Free-tier quota.** `gemini-3.6-flash` allows 20 requests/day per project on
   the free tier. When exhausted the UI reports the limit, scope and Google's own
   retry delay.

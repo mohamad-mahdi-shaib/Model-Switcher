@@ -270,11 +270,13 @@ dependency rationale.
 
 **Provider abstraction.** `ChatProvider` + `ProviderError` + a server registry.
 The route contains no SDK import, no model id and no vendor error handling;
-retryability is decided by the adapter. OpenAI and Anthropic adapters are
-deliberately absent rather than stubbed — a stub would either fabricate replies
-or fail confusingly, and both are worse than an honest "not connected".
+retryability is decided by the adapter. Gemini and OpenAI both ship and are both
+live-verified. Anthropic is deliberately absent rather than stubbed — a stub
+would either fabricate replies or fail confusingly, and both are worse than an
+honest "not connected" — and since it can never answer it is not offered in the
+selector either, rather than sitting there permanently greyed out.
 
 **Provider identity.** One `--accent` token per provider, switched by
 `data-provider` on the workspace root and consumed by the avatar rim, active
 chip, typing dots and Clear Glass glint. Panels, backgrounds and ink are
-untouched, so text contrast is unchanged across all seven backgrounds.
+untouched, so text contrast is unchanged across all eight backgrounds.

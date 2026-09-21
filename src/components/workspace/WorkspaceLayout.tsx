@@ -16,6 +16,7 @@ import {
   type BackgroundId,
   type GlassStyleId,
 } from "@/lib/backgrounds";
+import { providerKeyName } from "@/lib/chat";
 import {
   DEFAULT_PROVIDER,
   isProviderUsable,
@@ -72,8 +73,11 @@ export function WorkspaceLayout() {
   }, []);
 
   const provider = active?.providerId ?? DEFAULT_PROVIDER;
-  const geminiReady = availability === null || isProviderUsable("gemini", availability);
-  const notConfigured = availability !== null && !isProviderUsable(provider, availability);
+  // Readiness follows the *active* provider rather than a hardcoded one. With
+  // two providers, gating the composer on Gemini would lock out a perfectly
+  // working GPT conversation whenever Gemini's own key happened to be missing.
+  const providerReady = availability === null || isProviderUsable(provider, availability);
+  const notConfigured = availability !== null && !providerReady;
   const title = active?.title ?? "New conversation";
 
   return (
@@ -148,10 +152,10 @@ export function WorkspaceLayout() {
           />
 
           <MessageComposer
-            disabled={!hydrated || !geminiReady}
+            disabled={!hydrated || !providerReady}
             disabledReason={
-              !geminiReady
-                ? "Add GEMINI_API_KEY to .env.local to start chatting."
+              !providerReady
+                ? `Add ${providerKeyName(provider)} to .env.local to start chatting.`
                 : undefined
             }
             handleRef={composerRef}
