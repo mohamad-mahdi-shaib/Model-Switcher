@@ -130,6 +130,14 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const [pending, setPending] = useState<ProviderId | null>(null);
 
+  // The model actually in use, as reported by the server for the provider that
+  // is selected. Three distinct states, never a guess: still probing, a real
+  // id, or an honest admission that we do not know. A hardcoded fallback id
+  // would be worse than saying nothing -- it would be wrong with confidence.
+  const modelLabel =
+    activeModel ?? (availability === null ? "checking model…" : "model unavailable");
+  const modelKnown = activeModel !== null;
+
   const requestSwitch = (target: ProviderId) => {
     if (target === provider) return;
     if (!isProviderUsable(target, availability)) return;
@@ -154,67 +162,88 @@ export function ChatHeader({
       </h1>
 
       <div className="relative flex items-center gap-2">
-        <div
-          aria-label="AI provider"
-          className="glass-btn flex h-[30px] items-center gap-0.5 rounded-full p-0.5"
-          role="radiogroup"
-        >
-          {PROVIDERS.map((item) => {
-            const usable = isProviderUsable(item.id, availability);
-            const isActive = item.id === provider;
-            // While busy, every other chip is inert -- including to the
-            // keyboard, which `disabled` alone would still allow to focus.
-            const locked = busy && !isActive;
-            const reason =
-              availability?.[item.id]?.reason ??
-              item.note ??
-              "Not connected yet.";
-            return (
-              <button
-                aria-checked={isActive}
-                aria-disabled={!usable || locked}
-                aria-label={
-                  !usable
-                    ? `${item.label} — ${UNAVAILABLE_LABEL}. ${reason}`
-                    : locked
-                      ? `${item.label} — cannot switch while a response is in progress`
-                      : item.label
-                }
-                disabled={locked}
-                className={`focus-glass rounded-full px-2.5 py-[3px] text-[11.5px] font-medium transition-colors ${
-                  isActive
-                    ? "provider-chip-active border glass-text-dark"
-                    : !usable || locked
-                      ? "cursor-not-allowed border border-transparent opacity-45 glass-text-subtle"
-                      : "border border-transparent glass-text-muted hover:bg-white/10"
-                }`}
-                data-provider={item.id}
-                key={item.id}
-                onClick={() => {
-                  if (!usable || locked) return;
-                  requestSwitch(item.id);
-                }}
-                role="radio"
-                title={usable ? undefined : `${UNAVAILABLE_LABEL} — ${reason}`}
-                type="button"
-              >
-                {item.label}
-                {usable ? null : (
-                  <span className="sr-only"> ({UNAVAILABLE_LABEL})</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {activeModel ? (
-          <span
-            className="provider-model hidden rounded-full px-2 py-[3px] text-[10px] tracking-tight glass-text-subtle lg:inline"
-            title={`${getProviderMeta(provider).label} is using ${activeModel}`}
+        {/* The selector and the model it resolves to are one unit, stacked.
+            Beside the group the readout was ambiguous: with Gemini selected it
+            rendered 56px to the right of its own chip, with the GPT chip in
+            between, so it read as a label for GPT. Directly beneath the group,
+            right-aligned, it belongs to the selection at either setting. */}
+        <div className="flex flex-col items-end gap-[3px]">
+          <div
+            aria-label="AI provider"
+            className="glass-btn flex h-[30px] items-center gap-0.5 rounded-full p-0.5"
+            role="radiogroup"
           >
-            {activeModel}
+            {PROVIDERS.map((item) => {
+              const usable = isProviderUsable(item.id, availability);
+              const isActive = item.id === provider;
+              // While busy, every other chip is inert -- including to the
+              // keyboard, which `disabled` alone would still allow to focus.
+              const locked = busy && !isActive;
+              const reason =
+                availability?.[item.id]?.reason ??
+                item.note ??
+                "Not connected yet.";
+              return (
+                <button
+                  aria-checked={isActive}
+                  aria-disabled={!usable || locked}
+                  aria-label={
+                    !usable
+                      ? `${item.label} — ${UNAVAILABLE_LABEL}. ${reason}`
+                      : locked
+                        ? `${item.label} — cannot switch while a response is in progress`
+                        : item.label
+                  }
+                  disabled={locked}
+                  className={`focus-glass rounded-full px-2.5 py-[3px] text-[11.5px] font-medium transition-colors ${
+                    isActive
+                      ? "provider-chip-active border glass-text-dark"
+                      : !usable || locked
+                        ? "cursor-not-allowed border border-transparent opacity-45 glass-text-subtle"
+                        : "border border-transparent glass-text-muted hover:bg-white/10"
+                  }`}
+                  data-provider={item.id}
+                  key={item.id}
+                  onClick={() => {
+                    if (!usable || locked) return;
+                    requestSwitch(item.id);
+                  }}
+                  role="radio"
+                  title={usable ? undefined : `${UNAVAILABLE_LABEL} — ${reason}`}
+                  type="button"
+                >
+                  {item.label}
+                  {usable ? null : (
+                    <span className="sr-only"> ({UNAVAILABLE_LABEL})</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* The provider association is carried by aria-label rather than by
+              an sr-only child, so this element's own text stays exactly the
+              model id -- which is what tests and tooling read. */}
+          <span
+            aria-live="polite"
+            className={`provider-model rounded-full px-2 py-[2px] text-[11.5px] font-medium tracking-tight ${
+              modelKnown ? "glass-text-muted" : "glass-text-subtle italic"
+            }`}
+            data-model-known={modelKnown}
+            aria-label={
+              modelKnown
+                ? `${getProviderMeta(provider).label} is using model ${activeModel}`
+                : `No model reported for ${getProviderMeta(provider).label}`
+            }
+            title={
+              modelKnown
+                ? `${getProviderMeta(provider).label} is using ${activeModel}`
+                : `No model reported for ${getProviderMeta(provider).label}`
+            }
+          >
+            {modelLabel}
           </span>
-        ) : null}
+        </div>
 
         <BackgroundPicker
           activeGlass={activeGlass}
