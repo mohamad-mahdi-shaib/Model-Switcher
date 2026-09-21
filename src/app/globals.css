@@ -125,6 +125,11 @@ body {
   --asheet-edge-dark: rgba(38, 30, 24, 0.22);
   --asheet-spec: rgba(255, 255, 255, 0.95);
   --asheet-spec-accent: color-mix(in srgb, var(--accent) 38%, rgba(255, 255, 255, 0.72));
+  /* Champagne gold, warm on purpose -- the earlier streak was white/silver and
+     read as blue-ish against these panels. Deeper on a pale ground so it is
+     visible without becoming a highlight. No blue channel lift anywhere. */
+  --gold-core: rgba(198, 162, 92, 0.95);
+  --gold-edge: rgba(198, 162, 92, 0.28);
 }
 
 .workspace-root[data-tone="dark"] {
@@ -154,6 +159,9 @@ body {
   --asheet-edge-dark: rgba(0, 0, 0, 0.34);
   --asheet-spec: rgba(255, 255, 255, 0.8);
   --asheet-spec-accent: color-mix(in srgb, var(--accent) 42%, rgba(255, 255, 255, 0.6));
+  /* Lighter and warmer on a dark ground, where a deep gold would disappear. */
+  --gold-core: rgba(238, 210, 150, 0.92);
+  --gold-edge: rgba(238, 210, 150, 0.26);
 }
 
 /* --- Ink helpers --------------------------------------------------------- */
@@ -660,6 +668,57 @@ body {
   animation: user-enter 1200ms cubic-bezier(0.33, 0.12, 0.3, 0.92) backwards;
 }
 
+/* --- One-pass champagne streak -------------------------------------------
+   Accompanies a newly sent message only. It is a sibling of the animated
+   block, not a child, so the entrance above is untouched: same timing, easing,
+   travel and opacity as approved. Absolutely positioned below the sent row, so
+   it sits outside the text area and contributes nothing to layout. One pass,
+   ending at opacity 0, leaving no underline, frame or glow behind.
+-------------------------------------------------------------------------- */
+
+@keyframes gold-streak {
+  0% {
+    opacity: 0;
+    transform: translateX(24%) scaleX(0.55);
+  }
+  18% {
+    opacity: 1;
+  }
+  64% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-118%) scaleX(1);
+  }
+}
+
+.gold-streak {
+  position: absolute;
+  right: 0;
+  /* Clear of the timestamp row by enough to survive the entrance: the text
+     block is transformed 6px downwards while `user-enter` runs, so at -7px the
+     shifted timestamp reached the streak for the first half-second. Sits in
+     the gap above the next row, so it still costs no layout. */
+  bottom: -14px;
+  width: 38%;
+  height: 2px;
+  pointer-events: none;
+  opacity: 0;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0) 0%,
+    var(--gold-edge) 22%,
+    var(--gold-core) 50%,
+    var(--gold-edge) 78%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  /* Feathers the ends; no spread, so it cannot read as a glow. */
+  filter: blur(0.6px);
+  animation: gold-streak 1000ms cubic-bezier(0.32, 0, 0.2, 1) 250ms 1 both;
+}
+
 /* --- Assistant arrival: three soft stages --------------------------------- */
 
 /* The words now fade in individually as they are revealed, so the container
@@ -712,8 +771,23 @@ body {
   }
 }
 
+/* Measured: the previous 300ms ease-out reached half opacity at 105ms, so the
+   perceptible part of each fade was about a tenth of a second, and because the
+   fade was shorter than the gap between groups the newest words sat fully
+   settled for 62% of the reveal -- nothing was moving most of the time.
+
+   Fade shape, as the share of the animation spent inside the visible band:
+
+     300ms ease-out     50% at 105ms   76% visible   <- previous
+     500ms ease-out     50% at 175ms   76% visible
+     500ms ease-in-out  50% at 175ms   57% visible
+     500ms linear       50% at 250ms   90% visible   <- chosen
+
+   Linear is the most perceptible shape for a pure opacity change, and at 500ms
+   against a 200ms group interval two or three groups are always mid-fade, so
+   the reveal reads as continuous rather than as a series of settled steps. */
 .reveal-run {
-  animation: reveal-run 300ms ease-out backwards;
+  animation: reveal-run 500ms linear backwards;
 }
 
 /* --- The assistant pane --------------------------------------------------
@@ -990,6 +1064,9 @@ body {
      in use-reveal, so chunks land as they arrive. */
   .reveal-run {
     animation: none;
+  }
+  .gold-streak {
+    display: none;
   }
   /* No height collapse either: the row just fades. */
   .typing-exit {

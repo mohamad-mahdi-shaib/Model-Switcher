@@ -56,8 +56,10 @@ function UserMessage({ message, fresh }: { message: ChatMessage; fresh: boolean 
     <div className="flex justify-end pt-3">
       {/* The row holds its final size from the first frame -- the entrance
           animates opacity and a few pixels of transform only, so nothing below
-          reflows as the message appears. */}
-      <div className="max-w-[min(58ch,520px)]">
+          reflows as the message appears. `relative` is only a containing block
+          for the streak; the min-width is invisible (there is no box) and just
+          keeps the streak a sensible length behind a very short message. */}
+      <div className="relative min-w-[160px] max-w-[min(58ch,520px)]">
         <div className={fresh ? "user-enter" : ""}>
           {/* whitespace-pre-wrap renders newlines without dangerouslySetInnerHTML. */}
           <p className="text-right text-[13.5px] leading-relaxed font-semibold tracking-tight break-words whitespace-pre-wrap glass-text-dark">
@@ -71,6 +73,10 @@ function UserMessage({ message, fresh }: { message: ChatMessage; fresh: boolean 
             <CheckIcon aria-hidden="true" className="h-2.5 w-2.5" />
           </p>
         </div>
+        {/* Newly sent messages only -- a restored conversation renders without
+            this element at all, so there is nothing that could replay. Sibling
+            of the animated block, so the approved entrance is unaffected. */}
+        {fresh ? <span aria-hidden="true" className="gold-streak" /> : null}
       </div>
     </div>
   );
