@@ -86,7 +86,7 @@ export function WorkspaceLayout() {
     >
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 overflow-hidden"
+        className="ambient-orbs pointer-events-none absolute inset-0 overflow-hidden"
       >
         {AMBIENT_ORBS[background].map((orb, index) => (
           <div

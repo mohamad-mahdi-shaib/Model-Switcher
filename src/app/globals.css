@@ -1148,3 +1148,122 @@ body {
     transform: none;
   }
 }
+
+/* ===========================================================================
+   EXPERIMENT: Pearl Studio glass realism
+   Scope: Clear Glass + Warm Studio ONLY -- every rule below is gated on
+   [data-glass="ultra"][data-preset="warm"].
+
+   Nothing here can reach Glowy Glass, the other six backgrounds, or Clear
+   Glass on any other background: the shared Warm Studio asset and the shared
+   Clear Glass construction are untouched, and this block only overrides on a
+   strictly more specific selector. Revert = delete this block plus
+   public/backgrounds/pearl-studio.svg.
+
+   Baseline for comparison: aa49d18.
+   ======================================================================== */
+
+/* --- Background ----------------------------------------------------------
+   The shared preset is a mid-tone taupe field with no form in it, so the
+   panels had nothing to be transparent ABOUT -- their centres showed the same
+   flat colour as the surround, which reads as tint rather than glass. This
+   variant supplies sculptural folds for them to sit over.
+-------------------------------------------------------------------------- */
+.workspace-root[data-glass="ultra"][data-preset="warm"] {
+  background-image:
+    /* Daylight from the upper left, reinforced over the artwork. */
+    radial-gradient(
+      ellipse 70% 55% at 14% 6%,
+      rgba(255, 255, 255, 0.26) 0%,
+      rgba(255, 255, 255, 0) 62%
+    ),
+    /* Champagne settling into the lower right, so the lighting has a
+       direction rather than being evenly bright. */
+    radial-gradient(
+      ellipse 60% 50% at 88% 96%,
+      rgba(176, 158, 134, 0.34) 0%,
+      rgba(176, 158, 134, 0) 60%
+    ),
+    url("/backgrounds/pearl-studio.svg");
+  background-size: cover, cover, cover;
+  background-position: center, center, center;
+}
+
+/* The shared orbs were tuned for the taupe field and sit too heavy on pearl;
+   one of them is a dark brown that would read as a smudge. Dialled back so the
+   folds carry the form. The layer stays inert and non-interactive. */
+.workspace-root[data-glass="ultra"][data-preset="warm"] .ambient-orbs {
+  opacity: 0.32;
+}
+
+/* --- Panel material ------------------------------------------------------
+   On a pearl ground a white border is invisible and a white fill turns milky,
+   which is the opposite of clear glass. The edge is therefore carried by a
+   neutral hairline plus the existing graded ring, and the fill is reduced
+   until the folds read straight through the centre.
+-------------------------------------------------------------------------- */
+.workspace-root[data-glass="ultra"][data-preset="warm"] .optical-glass {
+  /* Thinner rim: more polished, less drawn. */
+  --rim-line: 1px;
+  /* Bright crest top-left, soft sides, a real contour lower-right. The dark
+     stop matters more here than on a dark ground -- it is what gives the pane
+     apparent thickness against white. */
+  --edge-lit: 0.95;
+  --edge-soft: 0.28;
+  --edge-dark: 0.17;
+  --edge-inner: 0.4;
+
+  /* Almost nothing: a faint lift at the top-left corner falling away to clear,
+     so the centre is the background and not a wash over it. */
+  background:
+    linear-gradient(
+      124deg,
+      rgba(255, 255, 255, 0.3) 0%,
+      rgba(255, 255, 255, 0.07) 22%,
+      rgba(255, 255, 255, 0) 48%,
+      rgba(255, 255, 255, 0.035) 100%
+    );
+  /* Neutral, not white: on pearl this is the difference between an edge you
+     can see and no edge at all. Never brightened -- a second bright border is
+     exactly what makes glass look like a glowing frame. */
+  border: 1px solid rgba(122, 106, 88, 0.2);
+  /* Grounding only: a close contact shadow, warm to match the light, with no
+     spread that would read as a floating card. */
+  box-shadow:
+    0 1px 2px -1px rgba(96, 82, 66, 0.16),
+    0 18px 40px -28px rgba(96, 82, 66, 0.3);
+}
+
+/* Sidebar: same language, quieter, so the two panels are lit by one source
+   rather than competing. */
+.workspace-root[data-glass="ultra"][data-preset="warm"] aside.optical-glass {
+  --edge-lit: 0.72;
+  --edge-soft: 0.2;
+  --edge-dark: 0.13;
+  --edge-inner: 0.3;
+  background: linear-gradient(
+    124deg,
+    rgba(255, 255, 255, 0.26) 0%,
+    rgba(255, 255, 255, 0.06) 26%,
+    rgba(255, 255, 255, 0) 54%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  border: 1px solid rgba(122, 106, 88, 0.16);
+  box-shadow:
+    0 1px 2px -1px rgba(96, 82, 66, 0.12),
+    0 16px 34px -28px rgba(96, 82, 66, 0.24);
+}
+
+/* The pointer glint is the existing system, unchanged in mechanism: only its
+   colour is warmed so the highlight belongs to this light. */
+.workspace-root[data-glass="ultra"][data-preset="warm"] {
+  --glint-color: rgba(255, 252, 244, 0.5);
+}
+
+/* Reduced motion already disables the glint in use-edge-glint.ts; this keeps
+   the pane's resting appearance finished rather than half-lit. */
+@media (prefers-reduced-motion: reduce) {
+  .workspace-root[data-glass="ultra"][data-preset="warm"] .edge-glint {
+    display: none;
+  }
+}
