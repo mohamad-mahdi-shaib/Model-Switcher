@@ -1,7 +1,13 @@
 # Requirements audit — Numbase Project 1: Creative Model-Switcher Interface
 
 **Audited against:** `references/Project 1_ Model-Switcher AI Interface .pdf` (read in full)
-**Date:** 2026-09-21 · **Post-implementation** (through milestone 14: live acceptance of both providers)
+**Date:** 2026-09-21 · **Post-implementation** (through the model-label fix, commit `c10e4cb`)
+
+> **Companion document:** [`final-inventory.md`](./final-inventory.md) is the fuller
+> submission audit — full requirement matrix with PDF wording and line references,
+> implementation inventory, visible-control inventory, delivery checklist and
+> readiness verdict. Where the two overlap, that document is the more recent and
+> more detailed reading. This one remains the per-requirement working record.
 **Method:** PDF re-read, code inspection, `npm test` (85 unit / contract / adapter tests), browser acceptance suites at **1366×768**, and one **live** end-to-end run against both real APIs.
 
 **Provider verification state at this revision:** **both providers are verified against their live APIs.** A single acceptance run streamed real answers from GPT and Gemini inside one conversation, carried a planted fact across three intervening turns and then across a provider switch, and survived a refresh. **7 upstream generation attempts were spent in total** (GPT 4, Gemini 2, plus 1 more GPT turn to record token usage), against 8 authorised. R14 is now closed on live evidence.
@@ -11,7 +17,7 @@
 **Evidence labels**
 - **[MOCKED]** — browser suite with all model traffic stubbed at `window.fetch`. No request reached Google; no quota consumed.
 - **[UNIT]** — `npm test`. No network.
-- **[LIVE]** — a real request to a real provider API, driven through the actual UI in a real browser with **no mock installed anywhere**. **7** upstream generation attempts were made this pass, counted from the dev-server log rather than assumed.
+- **[LIVE]** — a real request to a real provider API, driven through the actual UI in a real browser with **no mock installed anywhere**. **7** upstream generation attempts were made by that run, counted from the dev-server log rather than assumed. The later audit pass (commit `c10e4cb`) made **zero** live requests; its live rows cite that earlier recorded run and were not re-verified. See `final-inventory.md` §4 for a further 2 upstream requests observed on the same dev server that no automated run initiated.
 - **[ADAPTER-MOCK]** — the real adapter run against a mocked *upstream*: the adapter's own `fetch` is intercepted, so its SSE parsing, delta normalisation, abort handling and error classification are the code under test. Distinct from [MOCKED], which stubs the browser's `fetch` and never reaches adapter code at all.
 - **⚠️ NOT LIVE-VERIFIED** — implemented and covered by tests, but never exercised against the real provider.
 - **Static** — code read, `grep`, `git` history.
@@ -20,7 +26,9 @@
 
 ## 0. Classification of PDF statements
 
-**Explicit requirements** — §5 (5.1, 5.2); §3's stated result; §4's "Provider Abstraction Layer"; §6 Step 3 "Security First". §2's Creative Challenge bullets are explicit but qualitative ("Think about how messages appear", "Can you make the UI change subtly…").
+**Explicit requirements** — §5 (5.1, 5.2); §3's stated result. §2's Creative Challenge bullets are explicit in intent but qualitative ("Think about how messages appear", "Can you make the UI change subtly…"), so they are treated as inferred expectations rather than testable instructions.
+
+**A nuance corrected on re-reading the PDF:** §6 is headed *"Your Success Roadmap (**Here are some tips**)"*, which by the document's own framing makes Steps 1–3 tips rather than requirements. Step 3's security rule is still treated as binding here — it is phrased as "The Golden Rule" and names the failure as "a security breach" — but Step 2's normalization shape is correctly a **suggestion** with an illustrative example, not a mandated wire format. §4's "Provider Abstraction Layer" likewise appears under advice about using LLMs; the *layer* is an inferred expectation, made effectively binding by §3's "unified system", while *using an LLM to write it* is only a suggestion.
 
 **Suggestions, not binding** — Google Stitch / v0.dev, Framer Motion / GSAP, stack choice, the Glassmorphism moodboard, and the literal shape `{ "author": "assistant", "text": "Hello!" }` (introduced with "*Example:*").
 
@@ -103,11 +111,12 @@
 - **PDF:** §5.1 — "**A prominent, stylish selector.**"
 - **Status: Complete** *(was Partial — one selectable option)*
 - **Code:** `ChatHeader.tsx` — glass `role="radiogroup"`, top-right, plus a `.provider-model` readout.
-- **Does:** Both reachable providers render; the active one is accented and the model actually in use is shown beside it, read from the server probe rather than hardcoded. Availability is decided by the **server**, so a provider without a key cannot be chosen. Selecting a provider issues no request.
+- **Does:** Both reachable providers render; the active one is accented. The model actually in use is printed **directly beneath the group**, right-aligned, read from the server probe rather than hardcoded. Availability is decided by the **server**, so a provider without a key cannot be chosen. Selecting a provider issues no request.
 - **Evidence:**
   - [MOCKED] `[{gemini, disabled:false, checked:true}, {gpt, disabled:false}]` — **two** chips, and no Claude control of any kind.
   - [MOCKED] Clicking GPT left `window.__mock.requests` at **0** — selection is not a request.
   - [LIVE] With both real keys present the selector rendered exactly `["Gemini","GPT"]`, and selecting GPT set the readout to **`gpt-5.6-luna`** — the real id, matching what the adapter sent.
+  - [MOCKED] **Model readout, measured before and after commit `c10e4cb`** at 1366×768 and 1680×1050. Before: 10px, weight 400, subtle ink, contrast 6.13/6.42, rendered *beside* the whole group — so with Gemini selected it sat **56px to the right of its own chip with the GPT chip in between**, reading as a label for GPT — and hidden outright below the `lg` breakpoint, with **no element at all** when the server reported no model. After: 11.5px, weight 500, muted ink, contrast **7.83 / 7.92**, 5px directly beneath the group and horizontally overlapping it at either setting, always rendered, and an honest `"model unavailable"` (italic, `data-model-known="false"`) when nothing is reported. Header shows no overflow at either size (`scrollWidth === clientWidth`), panel dimensions unchanged at 1060×720.
 - **Gap:** None.
 - **Changed in milestone 14:** the permanently-disabled Claude chip was removed. It could never answer, so as a control it was noise, and "Coming soon" over something with neither key nor adapter is a promise the product cannot keep. The extensibility it was standing in for is unaffected: a provider is still one adapter, one `ProviderId` member, one `PROVIDERS` entry and one registry line.
 - **Test:** Two providers selectable, each routing to its own adapter; no inert third control.
@@ -276,9 +285,14 @@ See Appendix A.
 No requirement is now blocked. R14, the last one open, closed on live evidence this pass.
 
 ### C2. Known gaps that are NOT blockers
-1. **Live error paths unproven.** `INVALID_KEY`, `INSUFFICIENT_CREDIT`, `RATE_LIMIT` and `MODEL_BUSY` are verified only against mocked upstream responses. Proving them live means damaging the account or waiting for a real outage.
-2. **One live pass, not a soak test.** 7 upstream attempts is enough to prove the path, not to characterise reliability. One of those 7 was a transport `NETWORK` failure that the retry policy absorbed — real, handled, and a reminder that one user-visible turn can cost more than one upstream attempt.
-3. **Mobile deferred**, as the brief allows.
+1. **A truncated answer is not disclosed as truncated.** Found by inspection during the final audit. `openai.ts` returns cleanly on `response.incomplete` (the `max_output_tokens` signal), the route therefore emits `done`, and the client marks the message `complete` — so a capped reply ends mid-sentence and reads as a finished answer. The `interrupted` state that would disclose it exists and is used for Stop, but truncation never reaches it, because the NDJSON contract has no "finished early" event. Rare at a 1200-token cap; still a gap in honesty rather than a crash. Reported, deliberately not fixed in the audit pass. See `final-inventory.md` §2.
+2. **Gemini sets no output cap at all**, while OpenAI caps at 1200 tokens. Asymmetric and previously undocumented.
+3. **The switch-confirmation dialog does not trap focus.** It sets `aria-modal="true"` but does not mark the background inert, so the provider chips behind it remain in the tab order.
+4. **Live error paths unproven.** `INVALID_KEY`, `INSUFFICIENT_CREDIT`, `RATE_LIMIT` and `MODEL_BUSY` are verified only against mocked upstream responses. Proving them live means damaging the account or waiting for a real outage.
+5. **One live pass, not a soak test.** 7 upstream attempts is enough to prove the path, not to characterise reliability. One of those 7 was a transport `NETWORK` failure that the retry policy absorbed — real, handled, and a reminder that one user-visible turn can cost more than one upstream attempt.
+6. **Live evidence lives outside the repository.** The dev-server log and screenshots proving live operation are in a session scratchpad, not in `docs/`. They will not reach a reviewer unless exported deliberately.
+7. **Two substitutions need the owner's explicit blessing**, neither approved by the PDF: `gpt-5.6-luna` standing in for the brief's "GPT-4", and `role`/`content` + NDJSON standing in for the brief's `{"author","text"}` example. Both are disclosed in the README and in `final-inventory.md` §6.
+8. **Mobile deferred**, as the brief allows.
 
 ### D. Verified-with-mocks vs verified-live
 
