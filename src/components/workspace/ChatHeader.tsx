@@ -184,6 +184,13 @@ export function ChatHeader({
                 item.note ??
                 "Not connected yet.";
               return (
+                // `inline-flex items-center justify-center` centers the label
+                // (and, if one is ever added, an icon) explicitly, rather than
+                // relying on the default block layout's padding/line-height
+                // arithmetic to happen to net out identical across every
+                // state -- the padding/border/font classes below are already
+                // shared by all three states, so this is a guaranteed, not
+                // coincidental, match.
                 <button
                   aria-checked={isActive}
                   aria-disabled={!usable || locked}
@@ -195,7 +202,7 @@ export function ChatHeader({
                         : item.label
                   }
                   disabled={locked}
-                  className={`focus-glass rounded-full px-2.5 py-[3px] text-[11.5px] font-medium transition-colors ${
+                  className={`focus-glass inline-flex items-center justify-center rounded-full px-2.5 py-[3px] text-[11.5px] font-medium transition-colors ${
                     isActive
                       ? "provider-chip-active border glass-text-dark"
                       : !usable || locked
