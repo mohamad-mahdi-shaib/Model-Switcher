@@ -145,9 +145,46 @@ export function nextBoundary(
   while (i < limit && /\s/.test(content[i]) && content[i] !== "\n") i += 1;
   if (i < limit && content[i] === "\n") i += 1;
 
-  if (!complete && insideFence(content, i)) {
+  if (insideFence(content, i)) {
+    // Finding U4 (independent follow-up review): this used to be gated on
+    // `!complete`, so once the upstream stream had fully finished -- while
+    // the reveal was still catching up on a backlog -- fenced code stopped
+    // being kept to line boundaries at all, and the plain word-budget walk
+    // above could cut a code line mid-line (e.g. landing on "const value = "
+    // rather than the end of that line). There is nothing about `complete`
+    // that makes a mid-line cut acceptable; the fix below applies either
+    // way, and only the very last fallback (no newline left anywhere ahead)
+    // needs to tell the two cases apart.
     const lastNewline = content.lastIndexOf("\n", i - 1);
-    i = lastNewline >= from ? lastNewline + 1 : from;
+    if (lastNewline >= from) {
+      // The word-budget walk already crossed at least one newline inside the
+      // fence (several short code lines fit the budget): snap back to the
+      // start of the line it landed on, so a line is never split mid-line.
+      i = lastNewline + 1;
+    } else {
+      // The current line alone is already longer than the word budget, and
+      // the walk never reached its end. Finding F6: snapping back here used
+      // to mean `i = from` -- zero progress -- and the caller (`step()` in
+      // `use-reveal.ts`) treats zero progress as "wait for more text", which
+      // never actually helped: the same too-long line would still be there
+      // on the next tick. Look FORWARD instead for that line's own newline;
+      // if it has already fully arrived, reveal straight through it in one
+      // step, regardless of word count.
+      const lineEnd = content.indexOf("\n", from);
+      if (lineEnd !== -1 && lineEnd < limit) {
+        i = lineEnd + 1;
+      } else if (complete) {
+        // Finding U4: nothing more is ever coming -- this is genuinely the
+        // final, unterminated line (no closing newline, and possibly no
+        // closing fence either). Release the rest of it now rather than
+        // waiting for a newline that will never arrive.
+        i = limit;
+      } else {
+        // Streaming is still open and the line has not finished arriving:
+        // wait for more, exactly as before.
+        i = from;
+      }
+    }
   }
 
   // Hold back a construct that has only half arrived. On completion there is

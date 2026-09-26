@@ -37,15 +37,20 @@ body {
   transition: background 0.7s cubic-bezier(0.16, 1, 0.3, 1);
   background-size: cover;
   background-position: center;
+  /* Settings pass: text size (Appearance > Text size). A unitless multiplier,
+     applied only to conversation TEXT (the assistant's rendered Markdown --
+     paragraphs/lists/quotes/headings/code inherit or scale relative to it --
+     and the user's own sent message text), never to navigation chrome,
+     buttons, timestamps, or action labels, which keep their own fixed sizes
+     regardless of this setting. See MessageList.tsx/Markdown.tsx for exactly
+     which elements read this variable. */
+  --text-scale: 1;
 }
-
-.workspace-root[data-preset="warm"] {
-  background:
-    radial-gradient(ellipse at 88% 18%, rgba(255, 245, 235, 0.8) 0%, rgba(225, 210, 195, 0.45) 32%, transparent 70%),
-    radial-gradient(circle at 12% 40%, rgba(175, 155, 140, 0.55) 0%, transparent 55%),
-    radial-gradient(ellipse at 50% 88%, rgba(230, 218, 205, 0.65) 0%, transparent 65%),
-    radial-gradient(circle at 75% 70%, rgba(145, 128, 115, 0.45) 0%, transparent 50%),
-    linear-gradient(140deg, #6c6057 0%, #8c7f74 25%, #ad9f92 50%, #c4b5a7 75%, #887a6e 100%);
+.workspace-root[data-text-size="small"] {
+  --text-scale: 0.88;
+}
+.workspace-root[data-text-size="large"] {
+  --text-scale: 1.18;
 }
 
 .workspace-root[data-preset="obsidian"] {
@@ -56,7 +61,10 @@ body {
     linear-gradient(145deg, #0d1117 0%, #161b26 30%, #1e2433 60%, #10141d 100%);
 }
 
-.workspace-root[data-preset="marble"] {
+/* Settings pass: renamed from `marble` to `pearl` (Backgrounds reduced to
+   three) -- gradient values themselves are byte-for-byte unchanged, so this
+   stays the exact approved pearl-white appearance, not a new look. */
+.workspace-root[data-preset="pearl"] {
   /* Milestone 2B: was peaking near 238 mean luminance, which left Ultra Clear
      with no tonal ground to catch an edge against. Base gradient darkened and
      broad slate forms added so the pane has something to sit on. */
@@ -75,32 +83,24 @@ body {
    backdrop is unreadable.
 -------------------------------------------------------------------------- */
 
-.workspace-root[data-preset="champagne-silk"] {
-  background-image: url("/backgrounds/champagne-silk.svg");
-}
-.workspace-root[data-preset="emerald-onyx"] {
-  background-image: url("/backgrounds/emerald-onyx.svg");
-}
-.workspace-root[data-preset="amethyst-bloom"] {
-  background-image: url("/backgrounds/amethyst-bloom.svg");
-}
-.workspace-root[data-preset="amber-aurora"] {
-  background-image: url("/backgrounds/amber-aurora.svg");
-}
-/* The one photographic background. Bundled locally -- never hotlinked. `cover`
-   plus a centre-left position keeps the window wall and the receding floor in
-   frame at both 1366x768 and 1680x1050, which is what gives the panels
-   something with real depth behind them. */
-.workspace-root[data-preset="luxury-salon"] {
-  background-image: url("/backgrounds/luxury-salon.jpg");
-  background-size: cover;
-  background-position: 42% 62%;
+.workspace-root[data-preset="champagne-luxury"] {
+  background-image: url("/backgrounds/champagne-luxury.svg");
 }
 
 .workspace-root[data-tone="light"] {
   --ink: #1a1c22;
-  --ink-muted: #383c46;
-  --ink-subtle: #454a56;
+  /* Settings pass: darkened from #383c46/#454a56. The sidebar drawer now
+     uses the see-through `.optical-glass` material (matching the chosen
+     background) rather than the previous near-opaque one, and on the
+     lighter/busier presets (Pearl, Champagne Luxury) the old, lighter
+     muted/subtle inks -- inactive conversation rows, section labels, the
+     search placeholder -- read as genuinely low-contrast, not merely
+     de-emphasised. Both are still one and two steps lighter than --ink, so
+     the active/inactive hierarchy is preserved; they are simply real,
+     legible steps now instead of a near-wash on a light, translucent
+     panel. --ink itself is untouched (already strong contrast). */
+  --ink-muted: #21232b;
+  --ink-subtle: #2c2f38;
   --ink-shadow: 0 1px 1px rgba(255, 255, 255, 0.5);
   --ink-shadow-muted: 0 1px 1px rgba(255, 255, 255, 0.4);
   --ink-shadow-subtle: 0 1px 1px rgba(255, 255, 255, 0.35);
@@ -212,6 +212,43 @@ body {
     inset 0 -1.5px 2.5px rgba(0, 0, 0, 0.2),
     inset 0 0 16px rgba(255, 255, 255, 0.32);
   position: relative;
+}
+
+/* Settings pass: the workspace panel's own colour now follows the chosen
+   background instead of always being a flat white tint -- Pearl and
+   Obsidian are already close enough to neutral that white reads correctly
+   on both, but Champagne Luxury is a genuinely warm gold/cream palette,
+   and a plain white overlay on top of it read as a slightly cool, washed
+   mismatch rather than belonging to the same picture. Same structure as
+   the base rule above (same stop positions/alpha values), only the tint
+   colour itself changes, from white (255,255,255) to a warm champagne
+   gold matching the background artwork's own line-work colour. */
+.workspace-root[data-preset="champagne-luxury"] .optical-glass {
+  background: linear-gradient(
+    135deg,
+    rgba(214, 179, 110, 0.16) 0%,
+    rgba(214, 179, 110, 0.035) 40%,
+    rgba(214, 179, 110, 0.07) 70%,
+    rgba(214, 179, 110, 0.13) 100%
+  );
+  border-color: rgba(214, 179, 110, 0.55);
+}
+
+/* The mobile sidebar drawer (ConversationSidebar.tsx's MobileDrawer) carries
+   both `.optical-glass` (for its background/blur/border) and Tailwind's
+   `.fixed` utility (it must stay pinned to the viewport, not sit in normal
+   flex flow) on the same element. This custom rule's `position: relative`
+   above wins the cascade over `.fixed { position: fixed }` in this build,
+   silently demoting the drawer to an in-flow flex item -- it rendered
+   alongside the chat panel instead of floating over it, anchored at
+   whatever `left` offset happened to fall relative to its new flow
+   position rather than the viewport's actual left edge. `.optical-glass.fixed`
+   is more specific than `.optical-glass` alone, so it reliably wins
+   regardless of stylesheet order, without touching any other
+   `.optical-glass` consumer (the full sidebar and chat panel never carry
+   `.fixed`, so this rule never applies to them). */
+.optical-glass.fixed {
+  position: fixed;
 }
 
 /* --- Ultra Clear glass ----------------------------------------------------
@@ -355,6 +392,49 @@ body {
   /* No broad floating-card shadow, no outer glow. Grounding only: large blur,
      almost no offset. */
   box-shadow: 0 2px 44px -16px rgba(0, 0, 0, 0.22);
+}
+
+/* Same reasoning as the classic-mode Champagne Luxury override above,
+   applied to Clear Glass's own separate background definition (Tier 1
+   uses a different two-layer construction than the base rule, so this
+   mirrors ITS stops/alphas, not the base rule's). Four class-level
+   selectors, correctly more specific than Tier 1 alone (three), so this
+   wins only when both Clear Glass AND Champagne Luxury are active, and
+   never touches Tier 1's own tuning for Pearl/Obsidian. */
+.workspace-root[data-glass="ultra"][data-preset="champagne-luxury"] .optical-glass {
+  background:
+    linear-gradient(
+      118deg,
+      rgba(214, 179, 110, 0) 17%,
+      rgba(214, 179, 110, 0.05) 33%,
+      rgba(214, 179, 110, 0.03) 45%,
+      rgba(214, 179, 110, 0) 61%
+    ),
+    linear-gradient(
+      125deg,
+      rgba(214, 179, 110, 0.12) 0%,
+      rgba(214, 179, 110, 0.03) 30%,
+      rgba(214, 179, 110, 0.01) 62%,
+      rgba(214, 179, 110, 0.07) 100%
+    );
+  border-color: rgba(214, 179, 110, 0.22);
+}
+
+/* Recurrence of the exact same specificity trap `.optical-glass.fixed`
+   (above) was written to fix, this time under Clear Glass specifically:
+   this selector -- three class-level selectors -- is MORE specific than
+   `.optical-glass.fixed`'s two, so its own `position: relative` silently
+   won the cascade again, but only in Clear Glass mode (the sidebar drawer
+   carries `.optical-glass` and `.fixed` together, but never `.glass-btn`/
+   `.glass-input-capsule`, so it is only ever this one rule, above, that can
+   re-trip this). Confirmed by a real user report ("the workspace still
+   appears on the right" specifically under Clear Glass) after the first
+   fix, reproduced, and root-caused by specificity arithmetic before this
+   was written -- not guessed. Matching this rule's own selector shape,
+   with `.fixed` appended, is what reliably wins here without touching the
+   Tier-1 tuning above at all. */
+.workspace-root[data-glass="ultra"] .optical-glass.fixed {
+  position: fixed;
 }
 
 /* --- Tier 2: sidebar (same language, quieter) ----------------------------- */
@@ -1070,23 +1150,10 @@ body {
   --accent: #86c4a6;
 }
 
-/* The active model, beside the selector. A hairline pill, not a chip: it is a
-   readout, never a control. */
-.provider-model {
-  border: 1px solid var(--hairline);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  font-variant-numeric: tabular-nums;
-}
-
 .provider-avatar {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),
     0 1px 6px -3px color-mix(in srgb, var(--accent) 60%, transparent);
-}
-
-.provider-chip-active {
-  border-color: color-mix(in srgb, var(--accent) 55%, rgba(255, 255, 255, 0.8));
-  background: color-mix(in srgb, var(--accent) 16%, rgba(255, 255, 255, 0.3));
 }
 
 /* Localised accent in the pointer glint, Clear Glass only. */
@@ -1158,130 +1225,24 @@ body {
   }
 }
 
-/* ===========================================================================
-   EXPERIMENT: Pearl Studio glass realism
-   Scope: Clear Glass + Warm Studio, and Clear Glass + Luxury Salon. Every
-   rule below is gated on [data-glass="ultra"] AND one of those two presets.
-
-   Luxury Salon reuses these same rule bodies by adding itself to each
-   selector rather than restating the values, so there is one place to tune
-   the material and no competing override layer. Only the background-image
-   block below is Warm-Studio-specific.
-
-   Nothing here can reach Glowy Glass, the other six backgrounds, or Clear
-   Glass on any other background: the shared Warm Studio asset and the shared
-   Clear Glass construction are untouched, and this block only overrides on a
-   strictly more specific selector. Revert = delete this block plus
-   public/backgrounds/pearl-studio.svg.
-
-   Baseline for comparison: aa49d18.
-   ======================================================================== */
-
-/* --- Background ----------------------------------------------------------
-   The shared preset is a mid-tone taupe field with no form in it, so the
-   panels had nothing to be transparent ABOUT -- their centres showed the same
-   flat colour as the surround, which reads as tint rather than glass. This
-   variant supplies sculptural folds for them to sit over.
--------------------------------------------------------------------------- */
-.workspace-root[data-glass="ultra"][data-preset="warm"] {
-  background-image:
-    /* Daylight from the upper left, reinforced over the artwork. */
-    radial-gradient(
-      ellipse 70% 55% at 14% 6%,
-      rgba(255, 255, 255, 0.26) 0%,
-      rgba(255, 255, 255, 0) 62%
-    ),
-    /* Champagne settling into the lower right, so the lighting has a
-       direction rather than being evenly bright. */
-    radial-gradient(
-      ellipse 60% 50% at 88% 96%,
-      rgba(176, 158, 134, 0.34) 0%,
-      rgba(176, 158, 134, 0) 60%
-    ),
-    url("/backgrounds/pearl-studio.svg");
-  background-size: cover, cover, cover;
-  background-position: center, center, center;
-}
-
-/* The shared orbs were tuned for the taupe field and sit too heavy on pearl;
-   one of them is a dark brown that would read as a smudge. Dialled back so the
-   folds carry the form. The layer stays inert and non-interactive. */
-.workspace-root[data-glass="ultra"][data-preset="warm"] .ambient-orbs {
-  opacity: 0.32;
-}
-
-/* --- Panel material ------------------------------------------------------
-   On a pearl ground a white border is invisible and a white fill turns milky,
-   which is the opposite of clear glass. The edge is therefore carried by a
-   neutral hairline plus the existing graded ring, and the fill is reduced
-   until the folds read straight through the centre.
--------------------------------------------------------------------------- */
-.workspace-root[data-glass="ultra"][data-preset="warm"] .optical-glass,
-.workspace-root[data-glass="ultra"][data-preset="luxury-salon"] .optical-glass {
-  /* Thinner rim: more polished, less drawn. */
-  --rim-line: 1px;
-  /* Bright crest top-left, soft sides, a real contour lower-right. The dark
-     stop matters more here than on a dark ground -- it is what gives the pane
-     apparent thickness against white. */
-  --edge-lit: 0.95;
-  --edge-soft: 0.28;
-  --edge-dark: 0.17;
-  --edge-inner: 0.4;
-
-  /* Almost nothing: a faint lift at the top-left corner falling away to clear,
-     so the centre is the background and not a wash over it. */
-  background:
-    linear-gradient(
-      124deg,
-      rgba(255, 255, 255, 0.3) 0%,
-      rgba(255, 255, 255, 0.07) 22%,
-      rgba(255, 255, 255, 0) 48%,
-      rgba(255, 255, 255, 0.035) 100%
-    );
-  /* Neutral, not white: on pearl this is the difference between an edge you
-     can see and no edge at all. Never brightened -- a second bright border is
-     exactly what makes glass look like a glowing frame. */
-  border: 1px solid rgba(122, 106, 88, 0.2);
-  /* Grounding only: a close contact shadow, warm to match the light, with no
-     spread that would read as a floating card. */
-  box-shadow:
-    0 1px 2px -1px rgba(96, 82, 66, 0.16),
-    0 18px 40px -28px rgba(96, 82, 66, 0.3);
-}
-
-/* Sidebar: same language, quieter, so the two panels are lit by one source
-   rather than competing. */
-.workspace-root[data-glass="ultra"][data-preset="warm"] aside.optical-glass,
-.workspace-root[data-glass="ultra"][data-preset="luxury-salon"] aside.optical-glass {
-  --edge-lit: 0.72;
-  --edge-soft: 0.2;
-  --edge-dark: 0.13;
-  --edge-inner: 0.3;
-  background: linear-gradient(
-    124deg,
-    rgba(255, 255, 255, 0.26) 0%,
-    rgba(255, 255, 255, 0.06) 26%,
-    rgba(255, 255, 255, 0) 54%,
-    rgba(255, 255, 255, 0.03) 100%
-  );
-  border: 1px solid rgba(122, 106, 88, 0.16);
-  box-shadow:
-    0 1px 2px -1px rgba(96, 82, 66, 0.12),
-    0 16px 34px -28px rgba(96, 82, 66, 0.24);
-}
-
-/* The pointer glint is the existing system, unchanged in mechanism: only its
-   colour is warmed so the highlight belongs to this light. */
-.workspace-root[data-glass="ultra"][data-preset="warm"],
-.workspace-root[data-glass="ultra"][data-preset="luxury-salon"] {
-  --glint-color: rgba(255, 252, 244, 0.5);
-}
-
-/* Reduced motion already disables the glint in use-edge-glint.ts; this keeps
-   the pane's resting appearance finished rather than half-lit. */
-@media (prefers-reduced-motion: reduce) {
-  .workspace-root[data-glass="ultra"][data-preset="warm"] .edge-glint,
-  .workspace-root[data-glass="ultra"][data-preset="luxury-salon"] .edge-glint {
-    display: none;
+/* --- Search result highlight -----------------------------------------
+   A brief, independent flash marking the message a search result pointed
+   to -- deliberately its own mechanism, not a hook into the entrance
+   animations above, so selecting a search result can never replay a
+   message's original arrival. A plain background-color pulse, no
+   transform/translation, so it needs no reduced-motion override of its
+   own. Applied for exactly 2s (MessageList.tsx), timed to match here so
+   the fade finishes right as the class is removed. */
+@keyframes search-flash {
+  0% {
+    background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  100% {
+    background-color: transparent;
   }
 }
+.search-flash {
+  border-radius: 14px;
+  animation: search-flash 2000ms ease-out;
+}
+

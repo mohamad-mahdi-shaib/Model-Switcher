@@ -9,20 +9,27 @@ acceptance run on 2026-09-21 streamed real answers from GPT and Gemini in one
 conversation, carried context across providers, and survived a refresh. See
 "Provider status" below.
 
-Desktop only for this version — mobile is deferred and is not part of the brief.
+Desktop only for this version — mobile is out of scope for this submission. This is a scope decision, not something the brief asked for or deferred; the brief never mentions mobile at all.
 
 ---
 
 ## Setup
 
+**No credentials are included in this delivery.** `.env.local` and both API
+keys are deliberately excluded from every package built from this project —
+see "Environment variables" below. To exercise live Gemini/OpenAI responses,
+either create your own `.env.local` from `.env.example` using your own keys
+(get a free Gemini key at <https://aistudio.google.com/apikey> — no billing
+required, the free tier is sufficient), or request temporary credentials from
+the project owner, sent separately through a secure channel. Without a
+configured key the app still runs normally and shows an honest per-provider
+setup state; nothing is ever simulated.
+
 ```bash
 npm install
-cp .env.example .env.local     # then paste your key into .env.local
+cp .env.example .env.local     # then paste your own key into .env.local
 npm run dev                    # http://localhost:3000
 ```
-
-Get a free Gemini key at <https://aistudio.google.com/apikey>. No billing is
-required; the free tier is sufficient.
 
 **Restart the dev server after editing `.env.local`** — Next caches environment
 variables in the running process.
@@ -133,7 +140,8 @@ src/
     conversations.ts         title derivation, recency grouping
     markdown.ts              safe Markdown -> AST
     providers.ts             client provider registry + identity
-    backgrounds.ts           7 backgrounds, 2 glass styles
+    backgrounds.ts           8 backgrounds, 2 glass styles
+    limits.ts                shared input/conversation length limits (client + server)
 ```
 
 **Frontend / backend split.** The browser never talks to a model. It POSTs to
@@ -180,21 +188,35 @@ server-side persistence and no sync between devices.
 npm test
 ```
 
-38 tests, no network access and no model quota consumed:
+188 tests, no network access and no model quota consumed:
 
 - **Markdown** — safety (`javascript:` / `data:` links stripped, HTML never
   treated as markup) and streaming stability (every prefix of a fenced block
   parses without throwing).
-- **Adapter contract** — error classification against *real recorded* Gemini 429
-  and 503 payloads, quota parsing, registry shape, and a mock adapter proving a
-  non-Gemini provider satisfies the same interface.
+- **Adapter contract** — the real OpenAI and Gemini adapters driven against a
+  mocked transport (their own `fetch`/SDK network boundary, not a stub of
+  the browser's `fetch`): SSE parsing (including CRLF/CR line endings and a
+  delimiter split across transport chunks), delta normalisation, abort
+  handling, and error classification against *real recorded* Gemini 429/503
+  payloads and OpenAI's documented error shapes.
+- **Route** — the real `POST`/`GET` `/api/chat` handlers, called directly with
+  real `Request` objects: normalized terminal outcomes, and normalized
+  errors for malformed bodies/messages/provider ids.
 - **Storage** — round-trip, corrupt/future-version payloads left untouched,
   quota-full reporting, interrupted-reply restoration.
 - **Conversations** — title derivation, recency grouping, draft handling.
+- **Limits** — the shared draft-validation logic behind the input/conversation
+  length limits, at the exact boundary values.
+- **Reveal** — the streaming presentation queue, including a fenced code line
+  far longer than the pacing budget revealing promptly rather than stalling.
 
-Browser acceptance is driven through the Chrome DevTools Protocol with all model
-traffic mocked at `window.fetch`. See `docs/requirements-audit.md` for the
-requirement-by-requirement evidence.
+Real-browser acceptance is driven through the Chrome DevTools Protocol, with
+all model traffic mocked at `window.fetch` and the real provider domains
+additionally blocked at Chrome's own network layer as a fail-closed backstop.
+The harness is committed at `tests/browser/` (see its own `README.md`) rather
+than kept in a private scratchpad, and is run on demand, separately from
+`npm test`. See `docs/requirements-audit.md` for the requirement-by-requirement
+evidence.
 
 ---
 
@@ -296,7 +318,8 @@ provider it was originally sent to rather than being silently rerouted.
 - **Free-tier quota.** `gemini-3.6-flash` allows 20 requests/day per project on
   the free tier. When exhausted the UI reports the limit, scope and Google's own
   retry delay.
-- **Mobile deferred.** The sidebar is hidden below the `md` breakpoint.
+- **Mobile out of scope.** The sidebar is hidden below the `md` breakpoint. Not something the brief asked for or planned around — it simply never mentions mobile.
+- **Input and conversation limits.** Messages over 16,000 characters are refused client-side before they ever enter history, with the actual limit named; a conversation reaching 50 messages surfaces the real cap and offers a working path to a new conversation.
 - **Markdown subset.** Paragraphs, headings, lists, inline code, fenced code,
   links and blockquotes. No tables, images or footnotes.
 - **History is local.** Per browser; not synced, not on the server.

@@ -234,3 +234,125 @@ test("completion releases everything regardless of open syntax", () => {
   const src = "trailing [unclosed";
   assert.equal(nextBoundary(src, 0, 20, true), src.length);
 });
+
+/* --- F6: fenced code line longer than the word budget --------------------- */
+
+test("F6: a fully-arrived code line far longer than the word budget reveals in one step while still streaming", () => {
+  // Before the fix, the word-budget walk landed mid-line, the fence
+  // correction snapped back to the position it started from (zero progress),
+  // and the caller (use-reveal.ts's step()) read that as "wait for more" --
+  // forever, since the rest of the stream arriving never shortened this one
+  // line. Only three words are budgeted; the line has ten.
+  const src = "```js\nconst reallyLongVariableName = 1 + 2 + 3 + 4 + 5 + 6;\n";
+  const at = nextBoundary(src, 6, 3, false);
+  assert.ok(at > 6, `stalled at the opening fence: next=${at}, from=6`);
+  assert.equal(src.slice(6, at), "const reallyLongVariableName = 1 + 2 + 3 + 4 + 5 + 6;\n");
+});
+
+test("F6: repeated calls never land on the same offset twice while a long line is available", () => {
+  const src = "```\n" + "x = ".repeat(20) + "1;\nmore\n```\n";
+  let at = 0;
+  const seen = new Set<number>();
+  for (let i = 0; i < 20; i += 1) {
+    const next = nextBoundary(src, at, 3, false);
+    if (next === at) break; // waiting for more input is fine; looping is not
+    assert.ok(!seen.has(next), `boundary ${next} revisited -- stuck backtracking`);
+    seen.add(next);
+    at = next;
+  }
+});
+
+test("F6: subsequent code lines keep arriving in order, each intact, after a long line is revealed", () => {
+  const chunks = [
+    "```js\n",
+    "const aVeryLongLineThatBlowsThroughTheWordBudget = 12345;\n",
+    "const second = 2;\n",
+    "const third = 3;\n",
+    "```\n",
+  ];
+  let content = "";
+  let at = 0;
+  const steps: string[] = [];
+  for (let c = 0; c <= chunks.length; c += 1) {
+    const complete = c === chunks.length;
+    if (!complete) content += chunks[c];
+    for (;;) {
+      const next = nextBoundary(content, at, 3, complete);
+      if (next <= at) break;
+      steps.push(content.slice(at, next));
+      at = next;
+    }
+  }
+  assert.equal(content.slice(0, at), content, "every character was eventually revealed");
+  // No step is empty, and every step is a whole number of lines -- proof the
+  // long line was not silently dropped or re-ordered against its neighbours.
+  for (const step of steps) assert.ok(step.length > 0);
+});
+
+test("F6: a code line that has not finished arriving yet (no trailing newline) is withheld, not guessed at", () => {
+  const src = "```js\nconst stillArriving = 1 + 2 + 3 + 4"; // no trailing \n yet
+  const at = nextBoundary(src, 6, 3, false);
+  assert.equal(at, 6, "an incomplete line must not be partially revealed");
+});
+
+test("F6: a closing fence and an unterminated final line are both released once the stream completes", () => {
+  // No trailing newline on the very last line, and `complete` is true: the
+  // fence-line-boundary logic still runs (Finding U4 removed the old
+  // `!complete` gate), and its own final fallback releases the rest in one
+  // step once no more newline is ever coming.
+  const src = "```js\nconst x = 1;\nconst y = 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9";
+  let at = 0;
+  for (let i = 0; i < 100 && at < src.length; i += 1) {
+    const next = nextBoundary(src, at, 3, true);
+    assert.ok(next > at, `stalled at ${at} even though complete:true`);
+    at = next;
+  }
+  assert.equal(at, src.length);
+});
+
+/* --- U4: fenced code stays line-bounded once the stream has completed too -- */
+
+test("U4: a code line longer than the word budget is NOT cut mid-line once complete:true, even before the whole answer is drained", () => {
+  // The reviewer's own repro: from offset 6 (right after the opening fence's
+  // own line), a 3-word budget used to land mid-line ("const value = ") once
+  // `complete` was true, because the fence-boundary logic used to be skipped
+  // entirely in that case. It must now land exactly on that line's own
+  // newline instead, exactly as it already does while still streaming.
+  const src =
+    "```js\nconst value = calculate(first, second, third, fourth, fifth, sixth);\nmore\n```\n";
+  const at = nextBoundary(src, 6, 3, true);
+  assert.ok(at > 6, "must make forward progress");
+  assert.equal(
+    src[at - 1],
+    "\n",
+    `boundary ${at} ("${src.slice(6, at)}") is mid-line even though complete:true`,
+  );
+  assert.equal(
+    src.slice(6, at),
+    "const value = calculate(first, second, third, fourth, fifth, sixth);\n",
+    "must reveal the whole line, not a partial word-budget prefix of it",
+  );
+});
+
+test("U4: every intermediate boundary while draining a completed answer's code block is a full line (or the final flush)", () => {
+  const src =
+    "```js\nconst value = calculate(first, second, third, fourth, fifth, sixth);\nconst short = 1;\nmore\n```\n";
+  let at = 0;
+  const steps: string[] = [];
+  for (let i = 0; i < 100 && at < src.length; i += 1) {
+    const next = nextBoundary(src, at, 3, true);
+    assert.ok(next > at, `stalled at ${at}`);
+    steps.push(src.slice(at, next));
+    at = next;
+  }
+  assert.equal(at, src.length, "the full source must eventually be revealed");
+  // Every step but (possibly) the very last ends on a newline -- the last
+  // step may legitimately be the unterminated tail with no newline of its
+  // own, since there is nothing left to wait for once complete.
+  for (let i = 0; i < steps.length - 1; i += 1) {
+    assert.ok(
+      steps[i].endsWith("\n"),
+      `step ${i} ("${steps[i]}") does not end on a line boundary`,
+    );
+  }
+});

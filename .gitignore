@@ -41,3 +41,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local review artifacts (not part of the delivered app)
+/.review-screenshots
+
+# screenshots captured by the browser test runs -- generated evidence, not source
+tests/browser/*.png

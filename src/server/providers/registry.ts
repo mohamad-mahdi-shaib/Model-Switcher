@@ -18,21 +18,31 @@ import type { ChatProvider } from "@/server/providers/types";
  * Registration alone does not make a provider usable. Each adapter's
  * availability() decides that from whether its key is present on the server,
  * and "key present" means configured -- not validated, and not funded.
+ *
+ * A `Map`, not a plain object (Finding F4): a plain object literal is indexed
+ * off `Object.prototype`, so `REGISTRY["constructor"]` or
+ * `REGISTRY["__proto__"]` resolved to an inherited value -- the `Object`
+ * constructor function, or `Object.prototype` itself -- which is truthy and
+ * so passed the registry's own `?? null` check, then failed downstream with
+ * `provider.availability is not a function` instead of the intended
+ * `PROVIDER_DISABLED`. A `Map`'s keys are never looked up through a prototype
+ * chain, so `.get("__proto__")` and `.get("constructor")` simply miss, exactly
+ * like any other unregistered id.
  */
 
-const REGISTRY: Partial<Record<ProviderId, ChatProvider>> = {
-  gemini: geminiProvider,
-  gpt: openaiProvider,
-  // claude: anthropicProvider <- needs the adapter, a ProviderId member,
-  //                               a PROVIDERS entry and ANTHROPIC_API_KEY
-};
+const REGISTRY = new Map<ProviderId, ChatProvider>([
+  ["gemini", geminiProvider],
+  ["gpt", openaiProvider],
+  // ["claude", anthropicProvider] <- needs the adapter, a ProviderId member,
+  //                                   a PROVIDERS entry and ANTHROPIC_API_KEY
+]);
 
 export function getProvider(id: string): ChatProvider | null {
-  return REGISTRY[id as ProviderId] ?? null;
+  return REGISTRY.get(id as ProviderId) ?? null;
 }
 
 export function listProviders(): ChatProvider[] {
-  return Object.values(REGISTRY).filter(Boolean) as ChatProvider[];
+  return [...REGISTRY.values()];
 }
 
 /** Availability of every registered provider, for the client's capability probe. */

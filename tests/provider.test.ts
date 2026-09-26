@@ -168,35 +168,46 @@ test("Gemini reports unconfigured when no key is present", () => {
   }
 });
 
-/* ------------------------------ a mock adapter proves the seam is generic */
+/* ------------------- ChatProvider contract, exercised via a fixture adapter */
+/*
+ * T1: these three tests exercise `mockProvider` below, a local fixture --
+ * NOT either real adapter (`openaiProvider`/`geminiProvider` have their own
+ * dedicated test files: `tests/openai.test.ts`, `tests/gemini.test.ts`, both
+ * driving the real adapter against a mocked transport). Renamed from
+ * "adapters …" to make that explicit: the point of a fixture adapter is only
+ * to prove the `ChatProvider` interface itself is generic -- that the route
+ * and its retry/abort/streaming plumbing depend on nothing Gemini- or
+ * OpenAI-specific -- not to add coverage of either real provider.
+ */
 
 const mockProvider: ChatProvider = {
   id: "gpt",
   label: "Mock",
-  capabilities: { streaming: true, multiTurn: true, cancellation: true },
+  capabilities: { streaming: true, multiTurn: true, cancellation: true, attachments: false },
   availability: () => ({ configured: true, model: "mock-1" }),
   async stream(messages, signal) {
     if (messages.length === 0) throw new ProviderError("BAD_REQUEST");
     return (async function* () {
       for (const word of ["mock ", "reply"]) {
         if (signal.aborted) return;
-        yield { text: word };
+        yield { type: "delta", text: word } as const;
       }
+      if (!signal.aborted) yield { type: "outcome", outcome: "complete" } as const;
     })();
   },
 };
 
-test("a non-Gemini adapter satisfies the same contract", async () => {
+test("the ChatProvider contract: a fixture adapter streams deltas then outcome:complete", async () => {
   const chunks: string[] = [];
   const stream = await mockProvider.stream(
     [{ role: "user", content: "hi" }],
     new AbortController().signal,
   );
-  for await (const d of stream) chunks.push(d.text);
+  for await (const d of stream) if (d.type === "delta") chunks.push(d.text);
   assert.equal(chunks.join(""), "mock reply");
 });
 
-test("adapters signal cancellation through the shared AbortSignal", async () => {
+test("the ChatProvider contract: a fixture adapter honours an already-aborted signal", async () => {
   const controller = new AbortController();
   controller.abort();
   const stream = await mockProvider.stream(
@@ -204,11 +215,11 @@ test("adapters signal cancellation through the shared AbortSignal", async () => 
     controller.signal,
   );
   const chunks: string[] = [];
-  for await (const d of stream) chunks.push(d.text);
+  for await (const d of stream) if (d.type === "delta") chunks.push(d.text);
   assert.equal(chunks.length, 0);
 });
 
-test("adapters throw ProviderError, never a raw vendor error", async () => {
+test("the ChatProvider contract: a fixture adapter throws ProviderError for invalid input, never a raw error", async () => {
   await assert.rejects(
     () => mockProvider.stream([], new AbortController().signal),
     (e: unknown) => e instanceof ProviderError && e.code === "BAD_REQUEST",

@@ -33,7 +33,13 @@ export const PROVIDERS: readonly Provider[] = [
   { id: "gemini", label: "Gemini", enabled: true, accent: "#6f7f9b" },
   {
     id: "gpt",
-    label: "GPT",
+    // Responsive UI refinement: the reviewer asked for consistent
+    // user-facing names -- "Gemini" and "OpenAI" -- rather than "GPT". The
+    // internal id stays "gpt" (it is not user-facing: it is the wire value,
+    // the .env key lookup, and the data-provider/CSS-selector hook), so
+    // nothing about persistence, the API contract, or existing saved
+    // conversations changes.
+    label: "OpenAI",
     enabled: true,
     note: "Not connected — no OPENAI_API_KEY configured on the server.",
     accent: "#4f8c72",

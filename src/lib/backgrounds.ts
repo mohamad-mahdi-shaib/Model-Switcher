@@ -1,26 +1,25 @@
 /**
- * Backgrounds come in two collections:
+ * Backgrounds: exactly THREE choices, by explicit later decision (Settings
+ * pass), reduced from the eight this app shipped with earlier. This is a
+ * deliberate reduction, not a regression -- see `docs/settings-and-
+ * personalization.md` for the full record.
  *
- * - Ambient: three CSS-gradient presets derived from references/code.html.
- * - Luxury:  four bundled local SVG artworks plus one photograph, all in
- *            /public/backgrounds. Nothing is fetched from a remote host.
- *
- * Emerald Velvet and Sunset Horizon were removed in Milestone 2B: both sat at
- * mid luminance, which the binary light/dark ink system cannot serve, and both
- * failed WCAG AA on muted text.
+ * - Pearl: the exact same treatment previously shipped as "Pearl White
+ *   Marble" (id `marble`) -- the actual approved pearl-white glass
+ *   appearance, not a new look merely because its name contains "Pearl".
+ *   Only its `id` changed (`marble` -> `pearl`); swatch, tone, and orbs are
+ *   untouched.
+ * - Obsidian: the exact same treatment previously shipped as "Smoky
+ *   Obsidian" -- id, swatch, tone, and orbs all untouched.
+ * - Champagne Luxury: a new, original local SVG (`/public/backgrounds/
+ *   champagne-luxury.svg`) -- elegant flowing gold line work concentrated
+ *   near the outer edges, a deliberately quiet centre for text
+ *   readability. No remote image dependency, no copied stock asset.
  *
  * `id` matches the `data-preset` attribute that globals.css keys off.
  */
 
-export type BackgroundId =
-  | "warm"
-  | "obsidian"
-  | "marble"
-  | "champagne-silk"
-  | "emerald-onyx"
-  | "amethyst-bloom"
-  | "amber-aurora"
-  | "luxury-salon";
+export type BackgroundId = "pearl" | "obsidian" | "champagne-luxury";
 
 export type BackgroundTone = "light" | "dark";
 
@@ -37,76 +36,48 @@ export type Background = {
 
 export const BACKGROUNDS: readonly Background[] = [
   {
-    id: "warm",
-    name: "Warm Studio",
-    description: "Taupe architectural light",
-    collection: "Ambient",
-    tone: "light",
-    swatch: "linear-gradient(135deg, #ad9f92, #7d7065)",
-  },
-  {
-    id: "obsidian",
-    name: "Smoky Obsidian",
-    description: "Dark luxury moody glow",
-    collection: "Ambient",
-    tone: "dark",
-    swatch: "linear-gradient(135deg, #1e2433, #0d1117)",
-  },
-  {
-    id: "marble",
-    name: "Pearl White Marble",
+    id: "pearl",
+    name: "Pearl",
     description: "Cool veined silver and slate",
     collection: "Ambient",
     tone: "light",
     swatch: "linear-gradient(135deg, #f1f5f9, #cbd5e1)",
   },
   {
-    id: "champagne-silk",
-    name: "Champagne Silk",
-    description: "Ivory folds with restrained gold",
+    id: "obsidian",
+    name: "Obsidian",
+    description: "Dark luxury moody glow",
+    collection: "Ambient",
+    tone: "dark",
+    swatch: "linear-gradient(135deg, #1e2433, #0d1117)",
+  },
+  {
+    id: "champagne-luxury",
+    name: "Champagne Luxury",
+    description: "Cream and gold, quiet at the centre",
     collection: "Luxury",
     tone: "light",
-    swatch: "url('/backgrounds/champagne-silk.svg') center/cover",
-  },
-  {
-    id: "emerald-onyx",
-    name: "Emerald Onyx",
-    description: "Deep emerald over charcoal",
-    collection: "Luxury",
-    tone: "dark",
-    swatch: "url('/backgrounds/emerald-onyx.svg') center/cover",
-  },
-  {
-    id: "amethyst-bloom",
-    name: "Amethyst Bloom",
-    description: "Smoky plum with soft rose",
-    collection: "Luxury",
-    tone: "dark",
-    swatch: "url('/backgrounds/amethyst-bloom.svg') center/cover",
-  },
-  {
-    id: "amber-aurora",
-    name: "Amber Aurora",
-    description: "Terracotta, amber and burgundy",
-    collection: "Luxury",
-    tone: "dark",
-    swatch: "url('/backgrounds/amber-aurora.svg') center/cover",
-  },
-  {
-    // The only photographic background. Bundled locally; see README for the
-    // source and its CC0 dedication.
-    id: "luxury-salon",
-    name: "Luxury Salon",
-    description: "Daylit room in warm white and oak",
-    collection: "Luxury",
-    tone: "light",
-    swatch: "url('/backgrounds/luxury-salon.jpg') center/cover",
+    swatch: "url('/backgrounds/champagne-luxury.svg') center/cover",
   },
 ] as const;
 
 export const BACKGROUND_COLLECTIONS = ["Ambient", "Luxury"] as const;
 
-export const DEFAULT_BACKGROUND: BackgroundId = "warm";
+export const DEFAULT_BACKGROUND: BackgroundId = "pearl";
+
+/**
+ * A saved id from before the reduction to three (`warm`, `marble`,
+ * `champagne-silk`, `emerald-onyx`, `amethyst-bloom`, `amber-aurora`,
+ * `luxury-salon`) is migrated, never left blank or invalid: `marble`
+ * becomes `pearl` (the same approved treatment, renamed); every other
+ * removed id falls back to the new default. A valid current id passes
+ * through unchanged.
+ */
+export function migrateBackgroundId(id: string | undefined | null): BackgroundId {
+  if (id === "marble") return "pearl";
+  if (BACKGROUNDS.some((b) => b.id === id)) return id as BackgroundId;
+  return DEFAULT_BACKGROUND;
+}
 
 export function backgroundTone(id: BackgroundId): BackgroundTone {
   return BACKGROUNDS.find((background) => background.id === id)?.tone ?? "light";
@@ -144,8 +115,10 @@ export const GLASS_STYLES: readonly GlassStyle[] = [
 export const DEFAULT_GLASS: GlassStyleId = "classic";
 
 /* --- Ambient orbs ---------------------------------------------------------
-   Only the gradient presets get orbs; the Luxury artworks carry their own
-   lighting, so layering orbs on top would muddy them.
+   Only the two Ambient presets get orbs; Champagne Luxury carries its own
+   lighting (the SVG's own gold glow/line work), so layering orbs on top
+   would muddy it, matching the same rule the previous Luxury artworks
+   always followed.
 -------------------------------------------------------------------------- */
 
 export type AmbientOrb = {
@@ -155,28 +128,16 @@ export type AmbientOrb = {
 };
 
 export const AMBIENT_ORBS: Record<BackgroundId, readonly AmbientOrb[]> = {
-  warm: [
-    { className: "top-[5%] right-[10%] w-[580px] h-[580px]", color: "rgba(250, 237, 216, 0.45)", blur: "100px" },
-    { className: "-bottom-[12%] left-[22%] w-[880px] h-[480px]", color: "rgba(235, 220, 208, 0.5)", blur: "110px" },
-    { className: "top-[22%] left-[6%] w-[480px] h-[680px]", color: "rgba(82, 68, 58, 0.35)", blur: "120px" },
-    { className: "bottom-[22%] right-[18%] w-[420px] h-[420px]", color: "rgba(244, 231, 216, 0.4)", blur: "90px" },
+  pearl: [
+    { className: "top-[5%] right-[10%] w-[580px] h-[580px]", color: "rgba(255, 255, 255, 0.3)", blur: "100px" },
+    { className: "-bottom-[12%] left-[22%] w-[880px] h-[480px]", color: "rgba(214, 223, 234, 0.34)", blur: "110px" },
+    { className: "top-[22%] left-[6%] w-[480px] h-[680px]", color: "rgba(126, 142, 164, 0.42)", blur: "120px" },
+    { className: "bottom-[18%] right-[16%] w-[420px] h-[420px]", color: "rgba(140, 156, 176, 0.32)", blur: "95px" },
   ],
   obsidian: [
     { className: "top-[5%] right-[10%] w-[600px] h-[600px]", color: "rgba(59, 130, 246, 0.2)", blur: "130px" },
     { className: "-bottom-[12%] left-[22%] w-[880px] h-[480px]", color: "rgba(30, 41, 59, 0.4)", blur: "120px" },
     { className: "top-[22%] left-[6%] w-[480px] h-[680px]", color: "rgba(15, 23, 42, 0.5)", blur: "110px" },
   ],
-  // 2B: white orbs dialled back and the slate orb strengthened, so the preset
-  // keeps its airy feel without washing out to near-white.
-  marble: [
-    { className: "top-[5%] right-[10%] w-[580px] h-[580px]", color: "rgba(255, 255, 255, 0.3)", blur: "100px" },
-    { className: "-bottom-[12%] left-[22%] w-[880px] h-[480px]", color: "rgba(214, 223, 234, 0.34)", blur: "110px" },
-    { className: "top-[22%] left-[6%] w-[480px] h-[680px]", color: "rgba(126, 142, 164, 0.42)", blur: "120px" },
-    { className: "bottom-[18%] right-[16%] w-[420px] h-[420px]", color: "rgba(140, 156, 176, 0.32)", blur: "95px" },
-  ],
-  "champagne-silk": [],
-  "luxury-salon": [],
-  "emerald-onyx": [],
-  "amethyst-bloom": [],
-  "amber-aurora": [],
+  "champagne-luxury": [],
 };

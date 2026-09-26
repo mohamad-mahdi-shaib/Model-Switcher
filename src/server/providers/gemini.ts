@@ -1,9 +1,16 @@
-import { GoogleGenAI, type Content } from "@google/genai";
+import {
+  FinishReason,
+  GoogleGenAI,
+  type Content,
+  type GenerateContentResponse,
+} from "@google/genai";
 import type { ChatErrorCode, ChatErrorInfo, WireMessage } from "@/lib/chat";
+import type { Preferences } from "@/lib/preferences";
+import { buildSystemInstructionText } from "@/server/preferences";
 import {
   ProviderError,
   type ChatProvider,
-  type ProviderDelta,
+  type ProviderChunk,
 } from "@/server/providers/types";
 
 /**
@@ -128,10 +135,78 @@ function toProviderError(error: unknown): ProviderError {
   });
 }
 
+/**
+ * Maps Gemini's own `finishReason` to our normalized outcome (Finding F2,
+ * with a small follow-up correction made in the F3-F9 pass).
+ *
+ * The full enum, from the installed SDK's own types (not recalled from
+ * memory): FINISH_REASON_UNSPECIFIED, STOP, MAX_TOKENS, SAFETY, RECITATION,
+ * LANGUAGE, OTHER, BLOCKLIST, PROHIBITED_CONTENT, SPII, plus several
+ * tool/image-specific reasons this app never triggers (no tools, no image
+ * generation): MALFORMED_FUNCTION_CALL, IMAGE_SAFETY, UNEXPECTED_TOOL_CALL,
+ * TOO_MANY_TOOL_CALLS, IMAGE_PROHIBITED_CONTENT, NO_IMAGE, and others.
+ * https://ai.google.dev/api/generate-content#FinishReason
+ *
+ * Only `STOP` is genuine, full completion. `OTHER` is still reported
+ * "truncated" (unspecific, but a real, confirmed non-STOP stop -- the SDK's
+ * own docs describe it as "all other reasons that stopped the token
+ * generation", i.e. generation DID stop, just not for one of the named
+ * reasons). `FINISH_REASON_UNSPECIFIED`, and any value this switch does not
+ * name at all (a future SDK addition, or one of the tool/image reasons this
+ * app never triggers), map to "unknown" instead: the model reported that
+ * generation stopped, but gave no reason this file can actually interpret,
+ * so calling it a confirmed truncation would overstate what is known. Never
+ * folded into the MAX_TOKENS wording either way, since that would misreport
+ * the actual cause.
+ *
+ * Returns `null` for `undefined` (no finish signal on this chunk at all --
+ * the SDK's own docs: "If empty, the model has not stopped generating the
+ * tokens") so the caller can tell "not finished yet" apart from "finished,
+ * for an unrecognised reason".
+ */
+function classifyFinish(
+  reason: FinishReason | undefined,
+): { outcome: "complete" | "truncated" | "unknown"; reason?: string } | null {
+  if (!reason) return null;
+  switch (reason) {
+    case FinishReason.STOP:
+      return { outcome: "complete" };
+    case FinishReason.MAX_TOKENS:
+      return { outcome: "truncated", reason: "reached the length limit" };
+    case FinishReason.SAFETY:
+    case FinishReason.BLOCKLIST:
+    case FinishReason.PROHIBITED_CONTENT:
+      return { outcome: "truncated", reason: "stopped by content filtering" };
+    case FinishReason.RECITATION:
+      return { outcome: "truncated", reason: "stopped due to potential recitation" };
+    case FinishReason.LANGUAGE:
+      return { outcome: "truncated", reason: "stopped due to an unsupported language" };
+    case FinishReason.SPII:
+      return {
+        outcome: "truncated",
+        reason: "stopped to avoid sensitive personal information",
+      };
+    case FinishReason.OTHER:
+      return { outcome: "truncated" };
+    case FinishReason.FINISH_REASON_UNSPECIFIED:
+      // The SDK's own name for this value: the reason itself is unspecified.
+      // Distinct from OTHER -- this is not confirmation that something
+      // stopped generation for an identifiable non-STOP reason, it is the
+      // model declining to say. "unknown" is the honest read, not "truncated".
+      return { outcome: "unknown" };
+    default:
+      // Any value this switch does not name at all: a future SDK addition,
+      // or a tool/image-specific reason this text-only, tool-free app never
+      // triggers in practice. Not evidence of a confirmed truncation, and
+      // certainly not of success.
+      return { outcome: "unknown" };
+  }
+}
+
 export const geminiProvider: ChatProvider = {
   id: "gemini",
   label: "Gemini",
-  capabilities: { streaming: true, multiTurn: true, cancellation: true },
+  capabilities: { streaming: true, multiTurn: true, cancellation: true, attachments: true },
 
   availability() {
     const configured = Boolean(process.env.GEMINI_API_KEY?.trim());
@@ -145,36 +220,76 @@ export const geminiProvider: ChatProvider = {
   async stream(
     messages: readonly WireMessage[],
     signal: AbortSignal,
-  ): Promise<AsyncIterable<ProviderDelta>> {
+    preferences?: Preferences,
+  ): Promise<AsyncIterable<ProviderChunk>> {
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey) throw new ProviderError("MISSING_KEY");
 
     // Gemini expects 'model' for assistant turns. Sending the whole history is
     // what makes follow-up questions resolve against earlier context.
-    const contents: Content[] = messages.map((m) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
+    //
+    // Interaction refinement: image/PDF attachments become an `inlineData`
+    // Part alongside the text one -- Gemini's own real (vision-based)
+    // understanding path for both, confirmed against the installed
+    // `@google/genai` SDK's own `.d.ts` (`Part.inlineData: {mimeType,
+    // data}`), not assumed from the provider name. A text/code attachment
+    // has no vision path -- Gemini's own docs describe non-PDF documents as
+    // "extracted as pure text" -- so it is appended as its own labelled
+    // text Part instead, never silently folded into the user's own
+    // message text.
+    const contents: Content[] = messages.map((m) => {
+      const parts: Content["parts"] = [{ text: m.content }];
+      for (const attachment of m.attachments ?? []) {
+        if (attachment.kind === "text") {
+          parts.push({ text: `[Attached file: ${attachment.name}]\n${attachment.text}` });
+        } else {
+          parts.push({ inlineData: { mimeType: attachment.mimeType, data: attachment.data } });
+        }
+      }
+      return { role: m.role === "assistant" ? "model" : "user", parts };
+    });
 
     const ai = new GoogleGenAI({ apiKey });
 
-    let raw: AsyncGenerator<{ text?: string }>;
+    // Personalizations: `systemInstruction` (a plain string is a valid
+    // `ContentUnion`, confirmed against the installed SDK's own .d.ts) is
+    // the documented mechanism for steering the model without it being
+    // part of the conversation itself. Omitted entirely when there is
+    // nothing to say, so a request with no saved preferences is byte-for-
+    // byte the same request as before this existed.
+    const systemInstruction = buildSystemInstructionText(preferences);
+
+    let raw: AsyncGenerator<GenerateContentResponse>;
     try {
       raw = await ai.models.generateContentStream({
         model: model(),
         contents,
-        config: { abortSignal: signal },
+        config: { abortSignal: signal, ...(systemInstruction ? { systemInstruction } : {}) },
       });
     } catch (error) {
       throw toProviderError(error);
     }
 
-    // Normalise chunks and translate any mid-stream fault.
+    // Normalise chunks, read the finish reason (F2), and translate any
+    // mid-stream fault.
     return (async function* () {
       try {
+        let sawFinish = false;
         for await (const chunk of raw) {
           if (signal.aborted) return;
-          if (chunk.text) yield { text: chunk.text };
+          if (chunk.text) yield { type: "delta", text: chunk.text };
+          const finish = classifyFinish(chunk.candidates?.[0]?.finishReason);
+          if (finish) {
+            sawFinish = true;
+            yield { type: "outcome", ...finish };
+            return;
+          }
+        }
+        // The SDK's own generator ended without any chunk ever carrying a
+        // finishReason (F2: an upstream EOF with no confirmed completion).
+        // Never silently treated as success.
+        if (!sawFinish && !signal.aborted) {
+          yield { type: "outcome", outcome: "unknown" };
         }
       } catch (error) {
         if (signal.aborted) return;

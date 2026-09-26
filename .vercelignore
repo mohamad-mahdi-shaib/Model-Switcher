@@ -1,0 +1,33 @@
+# Vercel CLI (local, non-Git deploys) only honors .vercelignore -- it does
+# NOT read .gitignore. Vercel's own CLI already hardcodes .env.local and
+# .env.*.local into its default ignore list, but this repeats that exclusion
+# explicitly (defense in depth) and adds the private/internal material
+# .gitignore was never responsible for keeping out of a deployment.
+
+# Env files -- redundant with Vercel's built-in default ignore list for
+# .env.local specifically, kept explicit on purpose. .env.example is a
+# template with no real values and is fine to include.
+.env*
+!.env.example
+
+# Personal design references and the company brief -- not part of the
+# running application, not meant for a shared deployment.
+references/
+
+# Internal audit trail and review artifacts -- not the company-facing
+# report, and not needed to run the app.
+docs/design-decisions.md
+docs/final-inventory.md
+docs/requirements-audit.md
+docs/model-switcher-codex-review.md
+docs/project-technical-guide.md
+docs/remaining-work-plan.md
+docs/submission-checklist.md
+
+# Screenshots captured by browser test runs -- generated artifacts, not
+# source, and not needed to run the app.
+tests/browser/*.png
+
+# AI-agent tooling instructions -- not part of the running application.
+AGENTS.md
+CLAUDE.md

@@ -124,7 +124,7 @@ function CodeBlock({
         </span>
         <button
           aria-label={copied ? "Code copied" : "Copy code"}
-          className="focus-glass flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] glass-text-subtle transition-colors hover:bg-white/12 hover:glass-text-dark"
+          className="focus-glass flex min-h-11 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] glass-text-subtle transition-colors hover:bg-white/12 hover:glass-text-dark"
           onClick={() => copy(copyValue)}
           type="button"
         >
@@ -138,7 +138,13 @@ function CodeBlock({
       </div>
       {/* Horizontal scroll keeps long lines readable without reflowing. */}
       <pre className="glass-scroll overflow-x-auto px-3 py-2">
-        <code className="font-mono text-[11.5px] leading-relaxed whitespace-pre glass-text-dark">
+        {/* em-relative (0.92em of the 12.5px default container == 11.5px,
+            matching the previous fixed size exactly) so code blocks scale
+            with the text-size setting too, rather than staying fixed while
+            the prose around them grows or shrinks -- they still never
+            reflow, since the block's own `overflow-x-auto` handles any
+            line that grows past the panel width at a larger scale. */}
+        <code className="font-mono text-[0.92em] leading-relaxed whitespace-pre glass-text-dark">
           {/* Copy always sends the whole `value`, never the revealed runs. */}
           <Runs runs={runs} value={value} />
         </code>
@@ -156,12 +162,16 @@ function Block({ node, copyValue }: { node: BlockNode; copyValue?: string }) {
         </p>
       );
     case "heading": {
+      // Settings pass: em-relative (not fixed px) so a heading scales with
+      // the text-size setting exactly like the surrounding prose does --
+      // these ratios (1.2/1.12/1.04) reproduce the previous fixed 15/14/13px
+      // sizes exactly at the default 12.5px container size.
       const size =
         node.level === 1
-          ? "text-[15px]"
+          ? "text-[1.2em]"
           : node.level === 2
-            ? "text-[14px]"
-            : "text-[13px]";
+            ? "text-[1.12em]"
+            : "text-[1.04em]";
       const Tag = (`h${Math.min(node.level + 1, 6)}` as unknown) as "h2";
       return (
         <Tag className={`mt-3 mb-1 font-semibold tracking-tight glass-text-dark ${size}`}>

@@ -1,8 +1,10 @@
 import type { ChatErrorCode, ChatErrorInfo, WireMessage } from "@/lib/chat";
+import type { Preferences } from "@/lib/preferences";
+import { buildSystemInstructionText } from "@/server/preferences";
 import {
   ProviderError,
   type ChatProvider,
-  type ProviderDelta,
+  type ProviderChunk,
 } from "@/server/providers/types";
 
 /**
@@ -132,11 +134,66 @@ export function parseRetryAfter(headers: Headers | undefined): ChatErrorInfo | u
 }
 
 /**
- * Splits an SSE byte stream into the JSON payloads of its `data:` lines.
+ * Splits a decoded text buffer into complete lines, per the SSE line-ending
+ * rule: a line ends at LF, CR, or CRLF (Finding F7 -- the previous version
+ * only ever recognised a literal `"\n\n"`, so a CRLF-delimited stream, or a
+ * bare-CR one, yielded zero events).
+ * https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream
  *
- * Only `data:` is read. The `event:` line repeats the `type` already present
- * inside the JSON, and relying on the body alone keeps this robust to an event
- * name changing shape.
+ * A trailing lone CR at the very end of `buffer` is NOT treated as a
+ * terminator by default -- it may be the first half of a CRLF pair that a
+ * transport chunk split apart, so it is left in `rest` for the next read to
+ * resolve: if the next chunk starts with LF, the two combine into one
+ * terminator; if it starts with anything else, this same scan (re-run over
+ * the whole accumulated buffer, per the existing buffering pattern in this
+ * file) sees the CR is unpaired and terminates the line there instead.
+ *
+ * `final` is set once, only when the transport itself has confirmed there is
+ * no next chunk coming (the reader reported `done`): at that point a trailing
+ * lone CR cannot possibly still be waiting for a paired LF, so it is resolved
+ * as a real terminator immediately, rather than silently dropping the line
+ * (and, in turn, whatever event it would otherwise have caused to dispatch).
+ */
+function splitLines(buffer: string, final: boolean): { lines: string[]; rest: string } {
+  const lines: string[] = [];
+  let start = 0;
+  let i = 0;
+  while (i < buffer.length) {
+    const ch = buffer[i];
+    if (ch === "\n") {
+      lines.push(buffer.slice(start, i));
+      i += 1;
+      start = i;
+    } else if (ch === "\r") {
+      if (i + 1 >= buffer.length) {
+        if (!final) break; // could still be the start of "\r\n"
+        lines.push(buffer.slice(start, i));
+        i += 1;
+        start = i;
+        break;
+      }
+      lines.push(buffer.slice(start, i));
+      i += buffer[i + 1] === "\n" ? 2 : 1;
+      start = i;
+    } else {
+      i += 1;
+    }
+  }
+  return { lines, rest: buffer.slice(start) };
+}
+
+/**
+ * Splits an SSE byte stream into the JSON payloads of its `data:` fields.
+ *
+ * Only `data` fields are read. A line starting with `:` is a comment (e.g. a
+ * keep-alive ping) and is ignored, as is any other named field (`event:`,
+ * `id:`, `retry:`) -- the `type` already present inside the JSON payload
+ * makes `event:` redundant here, and relying on the body alone keeps this
+ * robust to an event name changing shape. Per the SSE spec, every `data:`
+ * line within one event (between blank lines) contributes to a single
+ * payload, joined by `"\n"`, rather than being parsed as separate JSON
+ * values -- a payload pretty-printed across multiple `data:` lines is still
+ * one JSON document.
  */
 export async function* parseSse(
   body: ReadableStream<Uint8Array>,
@@ -145,31 +202,54 @@ export async function* parseSse(
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let dataLines: string[] = [];
+
+  // Shared by the per-chunk pass and the final EOF pass below, so both apply
+  // exactly the same field/comment/dispatch rules.
+  function* consumeLines(lines: string[]): Generator<Record<string, unknown>> {
+    for (const line of lines) {
+      if (line === "") {
+        // A blank line ends the event: dispatch whatever `data:` lines
+        // accumulated since the last one, if any.
+        if (dataLines.length > 0) {
+          const payload = dataLines.join("\n");
+          dataLines = [];
+          if (payload && payload !== "[DONE]") {
+            try {
+              yield JSON.parse(payload) as Record<string, unknown>;
+            } catch {
+              // A truncated or non-JSON data payload is skipped rather
+              // than discarding everything already delivered.
+            }
+          }
+        }
+        continue;
+      }
+      if (line.startsWith(":")) continue; // comment / keep-alive
+      if (!line.startsWith("data:")) continue; // event:/id:/retry:, ignored
+      const fieldValue = line.slice(5);
+      // Exactly one leading space after the colon is stripped, per spec;
+      // further leading whitespace is part of the value.
+      dataLines.push(fieldValue.startsWith(" ") ? fieldValue.slice(1) : fieldValue);
+    }
+  }
 
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (done || signal.aborted) break;
+      if (signal.aborted) break;
+      if (done) {
+        // True transport EOF, not merely this read's chunk ending: resolve
+        // a trailing lone CR now rather than holding it back forever.
+        const { lines } = splitLines(buffer, true);
+        yield* consumeLines(lines);
+        break;
+      }
       buffer += decoder.decode(value, { stream: true });
 
-      // Events are separated by a blank line; a partial tail waits for more.
-      let split = buffer.indexOf("\n\n");
-      while (split !== -1) {
-        const block = buffer.slice(0, split);
-        buffer = buffer.slice(split + 2);
-        for (const line of block.split("\n")) {
-          if (!line.startsWith("data:")) continue;
-          const payload = line.slice(5).trim();
-          if (!payload || payload === "[DONE]") continue;
-          try {
-            yield JSON.parse(payload) as Record<string, unknown>;
-          } catch {
-            // A truncated or non-JSON data line is skipped rather than
-            // discarding everything already delivered.
-          }
-        }
-        split = buffer.indexOf("\n\n");
-      }
+      const { lines, rest } = splitLines(buffer, false);
+      buffer = rest;
+      yield* consumeLines(lines);
     }
   } finally {
     try {
@@ -203,6 +283,23 @@ function logUsage(response: unknown): void {
   });
 }
 
+/**
+ * A short, non-vendor-specific reason for a `response.incomplete` event
+ * (Finding F2), from the documented `incomplete_details.reason` field.
+ * Undefined for a reason this file does not specifically recognise -- the
+ * caller still reports the truncation itself accurately; it simply omits a
+ * specific explanation rather than inventing one.
+ * https://developers.openai.com/api/reference/resources/responses/streaming-events
+ */
+function incompleteReason(response: unknown): string | undefined {
+  const reason = (
+    response as { incomplete_details?: { reason?: string } } | undefined
+  )?.incomplete_details?.reason;
+  if (reason === "max_output_tokens") return "reached the length limit";
+  if (reason === "content_filter") return "stopped by content filtering";
+  return undefined;
+}
+
 /** Reads an error body without ever surfacing raw provider text to the user. */
 async function readErrorBody(response: Response): Promise<OpenAiErrorBody | null> {
   try {
@@ -214,8 +311,11 @@ async function readErrorBody(response: Response): Promise<OpenAiErrorBody | null
 
 export const openaiProvider: ChatProvider = {
   id: "gpt",
-  label: "GPT",
-  capabilities: { streaming: true, multiTurn: true, cancellation: true },
+  // Unused server-side (grep confirms no `.label` read anywhere under
+  // src/server/) -- kept in sync with the client registry's own rename
+  // (src/lib/providers.ts) so nothing here contradicts it.
+  label: "OpenAI",
+  capabilities: { streaming: true, multiTurn: true, cancellation: true, attachments: true },
 
   availability() {
     const configured = Boolean(process.env.OPENAI_API_KEY?.trim());
@@ -232,13 +332,58 @@ export const openaiProvider: ChatProvider = {
   async stream(
     messages: readonly WireMessage[],
     signal: AbortSignal,
-  ): Promise<AsyncIterable<ProviderDelta>> {
+    preferences?: Preferences,
+  ): Promise<AsyncIterable<ProviderChunk>> {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) throw new ProviderError("MISSING_KEY");
 
     // The whole conversation goes on every turn; that is what makes follow-ups
     // resolve against earlier context. Roles map straight across.
-    const input = messages.map((m) => ({ role: m.role, content: m.content }));
+    //
+    // Interaction refinement: a message with no attachments keeps the
+    // plain-string `content` shape unchanged -- the Responses API also
+    // accepts the richer array form unconditionally, but there is no
+    // reason to switch shape for the common case. One WITH attachments
+    // switches to the array form: `input_image` (a data URL, confirmed
+    // against current docs, not assumed from the provider name) for
+    // images, `input_file` for PDFs (the model's own vision+text
+    // extraction path for PDFs specifically), and a second `input_text`
+    // part for a text/code attachment, labelled, never silently merged
+    // into the user's own typed text.
+    const input = messages.map((m) => {
+      const attachments = m.attachments ?? [];
+      if (attachments.length === 0) return { role: m.role, content: m.content };
+      const parts: Array<Record<string, unknown>> = [{ type: "input_text", text: m.content }];
+      for (const attachment of attachments) {
+        if (attachment.kind === "image") {
+          parts.push({ type: "input_image", image_url: `data:${attachment.mimeType};base64,${attachment.data}` });
+        } else if (attachment.kind === "pdf") {
+          parts.push({
+            type: "input_file",
+            filename: attachment.name,
+            file_data: `data:${attachment.mimeType};base64,${attachment.data}`,
+          });
+        } else {
+          parts.push({ type: "input_text", text: `[Attached file: ${attachment.name}]\n${attachment.text}` });
+        }
+      }
+      return { role: m.role, content: parts };
+    });
+
+    // Personalizations: confirmed live against current docs
+    // (developers.openai.com/api/docs/api-reference/responses/create,
+    // re-checked before this was written, not assumed from memory) that
+    // the `input` array accepts a message with a `developer` or `system`
+    // role, and that such a message "takes precedence over instructions
+    // given with the user role" -- the documented way to steer the whole
+    // request without it being part of the conversation itself. Prepended
+    // only when there is something to say, so a request with no saved
+    // preferences sends the exact same `input` array as before this
+    // existed.
+    const systemInstruction = buildSystemInstructionText(preferences);
+    const finalInput = systemInstruction
+      ? [{ role: "developer", content: systemInstruction }, ...input]
+      : input;
 
     let response: Response;
     try {
@@ -250,7 +395,7 @@ export const openaiProvider: ChatProvider = {
         },
         body: JSON.stringify({
           model: model(),
-          input,
+          input: finalInput,
           stream: true,
           max_output_tokens: MAX_OUTPUT_TOKENS,
           reasoning: { effort: REASONING_EFFORT },
@@ -289,17 +434,28 @@ export const openaiProvider: ChatProvider = {
 
           if (type === "response.output_text.delta") {
             const text = event.delta;
-            if (typeof text === "string" && text) yield { text };
+            if (typeof text === "string" && text) yield { type: "delta", text };
             continue;
           }
           if (type === "response.completed") {
             logUsage(event.response);
+            yield { type: "outcome", outcome: "complete" };
             return;
           }
-          // `incomplete` means the token cap was reached. Whatever streamed
-          // before it is a real, if truncated, answer -- ending cleanly keeps
-          // it, where raising an error here would replace it with a banner.
-          if (type === "response.incomplete") return;
+          // `incomplete` means a confirmed, provider-reported non-success end
+          // (most often the token cap). Whatever streamed before it is a
+          // real, if truncated, answer -- ending cleanly keeps it, where
+          // raising an error here would replace it with a banner (F2: the
+          // route/client now also learn WHY, instead of this looking
+          // identical to a normal completion).
+          if (type === "response.incomplete") {
+            yield {
+              type: "outcome",
+              outcome: "truncated",
+              reason: incompleteReason(event.response),
+            };
+            return;
+          }
           if (type === "error" || type === "response.failed") {
             // A fault raised partway through, after text may already have been
             // delivered. NDJSON lets the route report it without discarding
@@ -313,6 +469,11 @@ export const openaiProvider: ChatProvider = {
             throw new ProviderError(code, { retryable });
           }
         }
+        // The SSE connection closed without ever emitting one of the
+        // recognised terminal events above (F2: an upstream EOF with no
+        // confirmed completion). Never silently treated as success --
+        // "unknown" is the honest fallback every adapter must yield here.
+        if (!signal.aborted) yield { type: "outcome", outcome: "unknown" };
       } catch (error) {
         if (signal.aborted) return;
         if (error instanceof ProviderError) throw error;

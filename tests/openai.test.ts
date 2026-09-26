@@ -52,9 +52,19 @@ function errorResponse(status: number, error: object, headers: Record<string, st
   });
 }
 
-async function collect(iterable: AsyncIterable<{ text: string }>): Promise<string> {
+type Chunk = { type: "delta"; text: string } | { type: "outcome"; outcome: string; reason?: string };
+
+/** Concatenates only the delta chunks' text -- outcome chunks carry none. */
+async function collect(iterable: AsyncIterable<Chunk>): Promise<string> {
   let out = "";
-  for await (const d of iterable) out += d.text;
+  for await (const d of iterable) if (d.type === "delta") out += d.text;
+  return out;
+}
+
+/** Every chunk, in order -- for tests that need to see the outcome too. */
+async function collectAll(iterable: AsyncIterable<Chunk>): Promise<Chunk[]> {
+  const out: Chunk[] = [];
+  for await (const d of iterable) out.push(d);
   return out;
 }
 
@@ -266,7 +276,7 @@ test("a mid-stream error throws a ProviderError after delivered text", async () 
       let delivered = "";
       await assert.rejects(
         (async () => {
-          for await (const d of stream) delivered += d.text;
+          for await (const d of stream) if (d.type === "delta") delivered += d.text;
         })(),
         (error: unknown) => {
           assert.ok(error instanceof ProviderError);
@@ -481,6 +491,107 @@ test("SSE parsing skips the [DONE] sentinel and malformed lines", async () => {
   assert.deepEqual(seen, ["a", "b"]);
 });
 
+/* --- F7: SSE line-ending and field-combination robustness ---------------- */
+
+test("F7: a CRLF-delimited SSE stream parses exactly like an LF one", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      const enc = new TextEncoder();
+      c.enqueue(
+        enc.encode(
+          'data: {"type":"response.output_text.delta","delta":"crlf"}\r\n\r\n' +
+            'data: {"type":"response.completed"}\r\n\r\n',
+        ),
+      );
+      c.close();
+    },
+  });
+  const seen: string[] = [];
+  for await (const event of parseSse(body, new AbortController().signal)) {
+    seen.push(String(event.type));
+  }
+  assert.deepEqual(seen, ["response.output_text.delta", "response.completed"]);
+});
+
+test("F7: a bare-CR-delimited SSE stream also parses correctly", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      const enc = new TextEncoder();
+      c.enqueue(enc.encode('data: {"type":"a"}\r\rdata: {"type":"b"}\r\r'));
+      c.close();
+    },
+  });
+  const seen: string[] = [];
+  for await (const event of parseSse(body, new AbortController().signal)) {
+    seen.push(String(event.type));
+  }
+  assert.deepEqual(seen, ["a", "b"]);
+});
+
+test("F7: a CRLF event delimiter split exactly across two transport chunks still parses", async () => {
+  // The \r lands in one chunk and its paired \n in the next -- the classic
+  // case a naive "\n\n" search, or a naive line splitter that treats a
+  // trailing \r as an immediate terminator, gets wrong. Two full events, each
+  // terminated by its own \r\n\r\n, with the split landing inside the first
+  // one's terminator.
+  const pieces = [
+    'data: {"type":"split-crlf"}\r',
+    '\n\r\ndata: {"type":"after"}\r\n\r\n',
+  ];
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      const enc = new TextEncoder();
+      for (const p of pieces) c.enqueue(enc.encode(p));
+      c.close();
+    },
+  });
+  const seen: string[] = [];
+  for await (const event of parseSse(body, new AbortController().signal)) {
+    seen.push(String(event.type));
+  }
+  // Both events recognised, and the split \r\n did not get misread as two
+  // separate blank-line terminators (which would have injected a spurious
+  // empty event between them).
+  assert.deepEqual(seen, ["split-crlf", "after"]);
+});
+
+test("F7: multiple data: lines in one event are combined into a single payload", async () => {
+  // Per the SSE spec, each data: line's value is appended with a "\n" between
+  // them and parsed as ONE payload, not several. A JSON document split across
+  // two data: lines is only valid once rejoined this way.
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      const enc = new TextEncoder();
+      c.enqueue(enc.encode('data: {"type":"combined",\ndata: "note":"two lines"}\n\n'));
+      c.close();
+    },
+  });
+  const seen: Record<string, unknown>[] = [];
+  for await (const event of parseSse(body, new AbortController().signal)) {
+    seen.push(event);
+  }
+  assert.deepEqual(seen, [{ type: "combined", note: "two lines" }]);
+});
+
+test("F7: a comment line is ignored and does not dispatch a spurious event", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      const enc = new TextEncoder();
+      c.enqueue(
+        enc.encode(
+          ": keep-alive\n\ndata: {\"type\":\"real\"}\nevent: message\nid: 1\n\n",
+        ),
+      );
+      c.close();
+    },
+  });
+  const seen: string[] = [];
+  for await (const event of parseSse(body, new AbortController().signal)) {
+    seen.push(String(event.type));
+  }
+  assert.deepEqual(seen, ["real"]);
+});
+
 test("the request bounds its output and turns reasoning off", async () => {
   const mock = mockUpstream(() =>
     sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
@@ -503,6 +614,71 @@ test("the request bounds its output and turns reasoning off", async () => {
   }
 });
 
+/* ------------------------------------------------------ Personalizations */
+
+test("Personalizations: preferred name + custom instructions are prepended to input as a developer-role message", async () => {
+  const mock = mockUpstream(() =>
+    sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal, {
+        preferredName: "Alex",
+        customInstructions: "Keep answers short.",
+      });
+      await collect(stream);
+      const body = JSON.parse(String(mock.calls[0].init.body));
+      assert.ok(Array.isArray(body.input));
+      const first = body.input[0];
+      assert.equal(first.role, "developer");
+      assert.match(first.content, /preferred name is "Alex"/);
+      assert.match(first.content, /Keep answers short\./);
+      // The original conversation is still there afterward, untouched.
+      assert.equal(body.input.at(-1).role, "user");
+      assert.equal(body.input.at(-1).content, "hello");
+      // Never forced to repeat the name in every reply.
+      assert.match(first.content, /without forcing it into every reply/);
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("Personalizations: no saved preferences means the input array is unchanged -- byte-identical to before this existed", async () => {
+  const mock = mockUpstream(() =>
+    sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal, undefined);
+      await collect(stream);
+      const body = JSON.parse(String(mock.calls[0].init.body));
+      assert.deepEqual(body.input, [{ role: "user", content: "hello" }]);
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("Personalizations: empty-string preferences (both fields blank) also leave the input array unchanged", async () => {
+  const mock = mockUpstream(() =>
+    sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal, {
+        preferredName: "",
+        customInstructions: "",
+      });
+      await collect(stream);
+      const body = JSON.parse(String(mock.calls[0].init.body));
+      assert.deepEqual(body.input, [{ role: "user", content: "hello" }]);
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
 test("a response truncated by the token cap keeps the text it delivered", async () => {
   const mock = mockUpstream(() =>
     sse(
@@ -516,6 +692,147 @@ test("a response truncated by the token cap keeps the text it delivered", async 
       const stream = await openaiProvider.stream(USER, new AbortController().signal);
       // Ending cleanly, not throwing: a truncated answer is still an answer.
       assert.equal(await collect(stream), "a partial answer");
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+/* --- F2: normalized terminal outcome ------------------------------------- */
+
+test("F2: a normal completion yields an explicit outcome:complete chunk", async () => {
+  const mock = mockUpstream(() =>
+    sse(
+      { type: "response.output_text.delta", delta: "all done" },
+      { type: "response.completed" },
+    ),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      const chunks = await collectAll(stream);
+      assert.deepEqual(chunks.at(-1), { type: "outcome", outcome: "complete" });
+      assert.equal(chunks.filter((c) => c.type === "outcome").length, 1);
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("F2: response.incomplete for a length cap reports a specific, non-vendor-vocabulary reason", async () => {
+  const mock = mockUpstream(() =>
+    sse(
+      { type: "response.output_text.delta", delta: "a partial answer" },
+      {
+        type: "response.incomplete",
+        response: { status: "incomplete", incomplete_details: { reason: "max_output_tokens" } },
+      },
+    ),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      const chunks = await collectAll(stream);
+      assert.deepEqual(chunks.at(-1), {
+        type: "outcome",
+        outcome: "truncated",
+        reason: "reached the length limit",
+      });
+      // The raw OpenAI field name never reaches this far.
+      assert.ok(!JSON.stringify(chunks).includes("max_output_tokens"));
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("F2: response.incomplete for content filtering reports its own distinct reason", async () => {
+  const mock = mockUpstream(() =>
+    sse({
+      type: "response.incomplete",
+      response: { status: "incomplete", incomplete_details: { reason: "content_filter" } },
+    }),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      const chunks = await collectAll(stream);
+      assert.deepEqual(chunks.at(-1), {
+        type: "outcome",
+        outcome: "truncated",
+        reason: "stopped by content filtering",
+      });
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("F2: an unrecognised incomplete reason is still reported truncated, with no invented reason", async () => {
+  const mock = mockUpstream(() =>
+    sse({
+      type: "response.incomplete",
+      response: { status: "incomplete", incomplete_details: { reason: "something_new" } },
+    }),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      const chunks = await collectAll(stream);
+      const last = chunks.at(-1) as { type: string; outcome: string; reason?: string };
+      assert.equal(last.type, "outcome");
+      assert.equal(last.outcome, "truncated");
+      assert.equal(last.reason, undefined, "must not fabricate a specific reason");
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("F2: a bare EOF with no terminal event at all reports outcome:unknown, never complete", async () => {
+  // The SSE connection just closes after some text -- no response.completed,
+  // no response.incomplete, no error. A real upstream drop, not simulated by
+  // any event type at all.
+  const mock = mockUpstream(
+    () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            const enc = new TextEncoder();
+            c.enqueue(
+              enc.encode(
+                'data: {"type":"response.output_text.delta","delta":"cut off mid"}\n\n',
+              ),
+            );
+            c.close(); // no terminal event of any kind before this
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+  );
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      const chunks = await collectAll(stream);
+      assert.deepEqual(chunks.at(-1), { type: "outcome", outcome: "unknown" });
+      const text = chunks
+        .filter((c): c is { type: "delta"; text: string } => c.type === "delta")
+        .map((c) => c.text)
+        .join("");
+      assert.equal(text, "cut off mid", "text already delivered must survive");
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("F2: an empty answer still yields exactly one outcome:complete chunk", async () => {
+  const mock = mockUpstream(() => sse({ type: "response.completed" }));
+  try {
+    await withKey(async () => {
+      const stream = await openaiProvider.stream(USER, new AbortController().signal);
+      const chunks = await collectAll(stream);
+      assert.deepEqual(chunks, [{ type: "outcome", outcome: "complete" }]);
     });
   } finally {
     mock.restore();

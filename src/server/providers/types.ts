@@ -1,4 +1,5 @@
-import type { ChatErrorCode, ChatErrorInfo, WireMessage } from "@/lib/chat";
+import type { ChatErrorCode, ChatErrorInfo, StreamOutcome, WireMessage } from "@/lib/chat";
+import type { Preferences } from "@/lib/preferences";
 import type { ProviderId } from "@/lib/providers";
 
 /**
@@ -12,6 +13,25 @@ import type { ProviderId } from "@/lib/providers";
 
 /** Normalised delta emitted by every adapter. */
 export type ProviderDelta = { text: string };
+
+/**
+ * One chunk of a normalized provider stream (Finding F2): either more text,
+ * or -- always exactly once, as the LAST chunk, on any non-throwing end of
+ * the stream -- the confirmed reason it ended.
+ *
+ * An adapter's `stream()` must never let its returned generator end without
+ * having yielded exactly one `"outcome"` chunk first. Concretely: on the
+ * provider's own confirmed completion signal, yield `{outcome:"complete"}`;
+ * on the provider's own confirmed non-success signal (a length cap, a
+ * content-policy stop, and so on), yield `{outcome:"truncated", reason?}`;
+ * and if the underlying connection simply ends with no such signal ever
+ * having arrived, yield `{outcome:"unknown"}` as a fallback immediately
+ * before returning. A thrown `ProviderError` remains the only channel for an
+ * actual failure -- this type covers only non-throwing ends.
+ */
+export type ProviderChunk =
+  | ({ type: "delta" } & ProviderDelta)
+  | { type: "outcome"; outcome: StreamOutcome; reason?: string };
 
 /** Normalised failure. Adapters translate vendor errors into this. */
 export class ProviderError extends Error {
@@ -38,6 +58,17 @@ export type ProviderCapabilities = {
   /** Whole-conversation context is sent on every turn. */
   multiTurn: boolean;
   cancellation: boolean;
+  /**
+   * Whether this adapter translates `WireMessage.attachments` into real
+   * provider input (Interaction refinement) -- both current adapters set
+   * this `true`, since the app's allowed attachment scope (JPEG/PNG/WebP
+   * images, PDF, a small text/code allowlist) is exactly the intersection
+   * of what Gemini and the configured OpenAI model actually support. Real
+   * infrastructure, not a stub: kept so the client can genuinely gate on a
+   * provider's own declared support rather than assuming it, if that
+   * intersection ever stops holding for a future provider.
+   */
+  attachments: boolean;
 };
 
 export type ProviderAvailability = {
@@ -58,10 +89,22 @@ export type ChatProvider = {
 
   /**
    * Streams a reply for the whole conversation. Must throw ProviderError (never
-   * a raw SDK error) and must honour `signal` for cancellation.
+   * a raw SDK error) and must honour `signal` for cancellation. See
+   * `ProviderChunk` for the one-outcome-chunk-on-every-non-throwing-end
+   * requirement.
+   *
+   * `preferences`, when present and non-empty (see `hasPreferences()`), is
+   * mapped to this provider's own instruction mechanism via the shared
+   * `buildSystemInstructionText()` (`@/server/preferences.ts`) -- never
+   * concatenated into the conversation's own messages. Applies to every
+   * request this function is asked to make, including Retry/Regenerate/
+   * Edit-and-resend, since all three call this the same way a fresh send
+   * does; there is no separate "preferences at the time this was
+   * originally sent" concept.
    */
   stream(
     messages: readonly WireMessage[],
     signal: AbortSignal,
-  ): Promise<AsyncIterable<ProviderDelta>>;
+    preferences?: Preferences,
+  ): Promise<AsyncIterable<ProviderChunk>>;
 };
