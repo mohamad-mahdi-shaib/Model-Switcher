@@ -27,6 +27,7 @@ docs/submission-checklist.md
 # Screenshots captured by browser test runs -- generated artifacts, not
 # source, and not needed to run the app.
 tests/browser/*.png
+.review-screenshots
 
 # AI-agent tooling instructions -- not part of the running application.
 AGENTS.md
