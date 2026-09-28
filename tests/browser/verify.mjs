@@ -988,6 +988,243 @@ let page_;
   await page.close();
 }
 
+{
+  // I12 (bug report: "I can't send when I add a photo"): a realistic
+  // oversized phone photo -- built in-page via canvas with enough pixel
+  // entropy that JPEG re-encoding can't trivially shrink it away, the same
+  // reason a real camera photo is large -- must still be sendable. Before
+  // this fix, any photo over 1MB (nearly every real phone photo) was
+  // silently marked an error chip and Send stayed disabled with no visible
+  // explanation. Now `attachments.ts`'s downscale-on-stage should shrink it
+  // under budget automatically, and the send must go through with genuine
+  // (still-decodable, still-JPEG) image bytes -- not a stub or a dropped
+  // attachment.
+  const page = await open();
+  page_ = page;
+
+  const staged = await evaluate(page, async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 3000;
+    canvas.height = 2000;
+    const ctx = canvas.getContext("2d");
+    const imageData = ctx.createImageData(canvas.width, canvas.height);
+    for (let i = 0; i < imageData.data.length; i += 4) {
+      imageData.data[i] = Math.random() * 255;
+      imageData.data[i + 1] = Math.random() * 255;
+      imageData.data[i + 2] = Math.random() * 255;
+      imageData.data[i + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.98));
+    const file = new File([blob], "phone-photo.jpg", { type: "image/jpeg" });
+    const input = document.querySelector('input[type="file"]');
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 1500));
+    const sendBtn = document.querySelector('[aria-label="Send message"]');
+    return { originalSize: blob.size, sendDisabled: sendBtn ? sendBtn.disabled : null };
+  });
+  log(
+    staged.originalSize > 2_200_000 && staged.sendDisabled === false,
+    "I12 an oversized (>2.2MB) synthetic photo is auto-compressed on stage and Send stays enabled",
+    JSON.stringify(staged),
+  );
+
+  await evaluate(page, () => {
+    window.__mock.firstTokenDelay = 40;
+    window.__mock.tokenGap = 10;
+    window.__mock.chunks = ["I see the photo."];
+    window.__mock.doneOutcome = "complete";
+    return true;
+  });
+  await page.send("Runtime.evaluate", { expression: SEND("what is this?"), awaitPromise: true });
+  await sleep(700);
+
+  const sentReq = await evaluate(page, () => window.__mock.sent.at(-1));
+  const lastMsg = sentReq?.messages.at(-1);
+  const att = (lastMsg?.attachments ?? [])[0];
+  const decodedBytes = att ? Math.floor((att.data.length * 3) / 4) : null;
+  log(
+    Boolean(sentReq) && att?.kind === "image" && att?.mimeType === "image/jpeg" && decodedBytes !== null && decodedBytes <= 2_200_000,
+    "I12 the compressed photo actually sends, under the byte budget, as real image data",
+    JSON.stringify({ sent: Boolean(sentReq), kind: att?.kind, mimeType: att?.mimeType, decodedBytes }),
+  );
+  await page.close();
+}
+
+{
+  // I12b: a genuinely unsupported file (never fixable by compression) must
+  // still surface a visible, specific reason -- not just a small caption
+  // inside the attachment chip that's easy to miss, which was the other
+  // half of why "I can't send" felt inexplicable.
+  const page = await open();
+  page_ = page;
+
+  const result = await evaluate(page, async () => {
+    const file = new File([new Uint8Array([1, 2, 3, 4, 5])], "video.mp4", { type: "video/mp4" });
+    const input = document.querySelector('input[type="file"]');
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 500));
+    const sendBtn = document.querySelector('[aria-label="Send message"]');
+    const notice = document.querySelector('[role="alert"]');
+    return {
+      sendDisabled: sendBtn ? sendBtn.disabled : null,
+      noticeText: notice ? notice.textContent.trim() : null,
+    };
+  });
+  log(
+    result.sendDisabled === true && Boolean(result.noticeText) && result.noticeText.includes("Unsupported file type"),
+    "I12b an unsupported attachment blocks Send with a visible, specific notice, not a silent disable",
+    JSON.stringify(result),
+  );
+  await page.close();
+}
+
+{
+  // I13 (follow-up to the photo-send fix: "make a loading symbol on the
+  // picture, then I know when I should send it"): while a file is still
+  // being staged (read, sniffed, and -- for an oversized photo --
+  // recompressed), the chip must show a visible loading state and Send must
+  // stay genuinely disabled, not just cosmetically grey. Caught mid-flight
+  // by dispatching the file-input change event without awaiting the async
+  // staging work, then polling quickly for the loading state before it
+  // resolves.
+  const page = await open();
+  page_ = page;
+
+  await evaluate(page, () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 3000;
+    canvas.height = 2000;
+    const ctx = canvas.getContext("2d");
+    const imageData = ctx.createImageData(canvas.width, canvas.height);
+    for (let i = 0; i < imageData.data.length; i += 4) {
+      imageData.data[i] = Math.random() * 255;
+      imageData.data[i + 1] = Math.random() * 255;
+      imageData.data[i + 2] = Math.random() * 255;
+      imageData.data[i + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    canvas.toBlob(
+      (blob) => {
+        const file = new File([blob], "phone-photo.jpg", { type: "image/jpeg" });
+        const input = document.querySelector('input[type="file"]');
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      "image/jpeg",
+      0.98,
+    );
+    return true;
+  });
+
+  let midFlight = null;
+  for (let i = 0; i < 20; i++) {
+    await sleep(50);
+    midFlight = await evaluate(page, () => ({
+      spinnerPresent: Boolean(document.querySelector('[aria-label="Preparing"]')),
+      sendDisabled: document.querySelector('[aria-label="Send message"]')?.disabled ?? null,
+    }));
+    if (midFlight.spinnerPresent) break;
+  }
+  log(
+    midFlight?.spinnerPresent === true && midFlight?.sendDisabled === true,
+    "I13 a still-staging attachment shows a loading spinner on its chip and Send is disabled while it's in flight",
+    JSON.stringify(midFlight),
+  );
+
+  const clickedDuringStaging = await evaluate(page, () => {
+    const before = window.__mock.sent.length;
+    const sendBtn = document.querySelector('[aria-label="Send message"]');
+    sendBtn.click();
+    return { before, after: window.__mock.sent.length, wasDisabled: sendBtn.disabled };
+  });
+  log(
+    clickedDuringStaging.wasDisabled === true && clickedDuringStaging.after === clickedDuringStaging.before,
+    "I13b clicking Send while an attachment is still staging is a genuine no-op, not just a greyed-out button",
+    JSON.stringify(clickedDuringStaging),
+  );
+
+  await sleep(2000);
+  const settled = await evaluate(page, () => ({
+    spinnerGone: !document.querySelector('[aria-label="Preparing"]'),
+    sendDisabled: document.querySelector('[aria-label="Send message"]')?.disabled ?? null,
+  }));
+  log(
+    settled.spinnerGone === true && settled.sendDisabled === false,
+    "I13c once staging finishes, the spinner clears and Send re-enables",
+    JSON.stringify(settled),
+  );
+  await page.close();
+}
+
+{
+  // I14 (bug report: "I cannot send the photo without any prompt"): Send
+  // looks clickable with just an attachment and no typed text (an
+  // attachment alone satisfies the "something to send" guard), but the text
+  // that reached send() was still an empty string, which validateDraft()
+  // unconditionally refuses -- so clicking Send silently did nothing at
+  // all. Fixed by substituting a real fallback question when nothing was
+  // typed, so an attachment-only send now actually goes out, and asks the
+  // model to analyze/summarize what was attached rather than sending blank
+  // content.
+  const page = await open();
+  page_ = page;
+
+  await page.send("Runtime.evaluate", { expression: STAGE_FILE(PNG_BYTES, "photo.png", "image/png"), awaitPromise: true });
+  await sleep(300);
+
+  const beforeSend = await evaluate(page, () => {
+    const sendBtn = document.querySelector('[aria-label="Send message"]');
+    const ta = document.querySelector("textarea");
+    return { sendDisabled: sendBtn.disabled, textValue: ta.value };
+  });
+  log(
+    beforeSend.sendDisabled === false && beforeSend.textValue === "",
+    "I14a Send is enabled for an attachment-only draft even with nothing typed",
+    JSON.stringify(beforeSend),
+  );
+
+  await evaluate(page, () => {
+    window.__mock.firstTokenDelay = 30;
+    window.__mock.tokenGap = 5;
+    window.__mock.chunks = ["This looks like a small test image."];
+    window.__mock.doneOutcome = "complete";
+    return true;
+  });
+  const clicked = await evaluate(page, () => {
+    document.querySelector('[aria-label="Send message"]').click();
+    return true;
+  });
+  await sleep(600);
+
+  const sentReq = await evaluate(page, () => window.__mock.sent.at(-1));
+  const lastMsg = sentReq?.messages.at(-1);
+  log(
+    clicked === true &&
+      Boolean(sentReq) &&
+      typeof lastMsg?.content === "string" &&
+      lastMsg.content.trim().length > 0 &&
+      (lastMsg?.attachments ?? []).length === 1,
+    "I14b clicking Send with only an attachment actually sends -- a real, non-blank question, not silently nothing",
+    JSON.stringify({ sent: Boolean(sentReq), content: lastMsg?.content, attachmentCount: lastMsg?.attachments?.length }),
+  );
+
+  const transcriptShowsQuestion = await evaluate(page, (question) => document.body.innerText.includes(question), lastMsg?.content ?? "");
+  log(
+    transcriptShowsQuestion === true,
+    "I14c the transcript shows the actual question that was sent, not a blank user turn",
+  );
+  await page.close();
+}
+
 /* ===================================================================== *
  * Light regression spot-check: F1/F2 remain correct, approved visuals intact
  * ===================================================================== */

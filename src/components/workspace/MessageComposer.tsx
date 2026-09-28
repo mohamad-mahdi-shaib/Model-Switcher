@@ -10,10 +10,15 @@ import {
   MAX_CHARS,
   MAX_MESSAGES,
 } from "@/lib/limits";
-import { stageAttachment, type DraftAttachment } from "@/lib/attachments";
+import {
+  classifyFile,
+  defaultPromptForAttachments,
+  stageAttachment,
+  type DraftAttachment,
+} from "@/lib/attachments";
 import { deleteAttachmentsBytes } from "@/lib/attachment-storage";
 import { ProviderSwitcher } from "@/components/workspace/ProviderMenu";
-import type { AttachmentMeta } from "@/lib/chat";
+import { newId, type AttachmentMeta } from "@/lib/chat";
 import type { AvailabilityMap, ProviderId } from "@/lib/providers";
 import type { ChatStatus, SendResult } from "@/lib/use-conversations";
 
@@ -127,22 +132,52 @@ export function MessageComposer({
    * "over budget" rejects the files that just caused it rather than
    * silently dropping some. A rejected file still gets a chip explaining
    * why, with a remove control -- never a silent drop.
+   *
+   * A file's chip appears immediately, in `"staging"` state (with a real
+   * thumbnail for an image, from the original file, so there's no blank
+   * flash), rather than only once `stageAttachment()` resolves -- reading a
+   * large photo and, when it's oversized, recompressing it is real async
+   * work that can take a visible moment, and the whole point of the loading
+   * state is showing that it's still in progress rather than the chip
+   * silently appearing only once it's already done.
    */
   const handleFiles = async (fileList: FileList | File[]) => {
     const files = Array.from(fileList);
     if (files.length === 0) return;
-    const staged = await Promise.all(files.map(stageAttachment));
+    const placeholders: DraftAttachment[] = files.map((file) => ({
+      id: newId("att"),
+      name: file.name,
+      size: file.size,
+      kind: classifyFile(file),
+      status: "staging",
+      previewUrl: classifyFile(file) === "image" ? URL.createObjectURL(file) : undefined,
+    }));
+    setAttachments((prev) => [...prev, ...placeholders]);
+
+    const staged = await Promise.all(
+      files.map((file, i) => stageAttachment(file, placeholders[i].id)),
+    );
+
     setAttachments((prev) => {
-      const combined = [...prev, ...staged];
+      const resolvedById = new Map(staged.map((a) => [a.id, a]));
+      const replaced = prev.map((a) => {
+        const resolved = resolvedById.get(a.id);
+        if (!resolved) return a;
+        // The placeholder's own temporary preview (from the original file)
+        // is superseded by the resolved chip's (from the possibly-
+        // compressed one) -- revoked here rather than left to leak.
+        if (a.previewUrl && a.previewUrl !== resolved.previewUrl) URL.revokeObjectURL(a.previewUrl);
+        return resolved;
+      });
+      const stagedIds = new Set(placeholders.map((p) => p.id));
       const readyCheck = validateAttachmentSizes(
-        combined.filter((a) => a.status === "ready").map((a) => ({ name: a.name, size: a.size })),
+        replaced.filter((a) => a.status === "ready").map((a) => ({ name: a.name, size: a.size })),
       );
-      if (readyCheck.ok) return combined;
+      if (readyCheck.ok) return replaced;
       const message = attachmentRejectionMessage(readyCheck);
-      return [
-        ...prev,
-        ...staged.map((a) => (a.status === "ready" ? { ...a, status: "error" as const, error: message } : a)),
-      ];
+      return replaced.map((a) =>
+        stagedIds.has(a.id) && a.status === "ready" ? { ...a, status: "error" as const, error: message } : a,
+      );
     });
   };
 
@@ -159,15 +194,34 @@ export function MessageComposer({
   };
 
   const hasAttachmentErrors = attachments.some((a) => a.status === "error");
+  // Send stays disabled while any chip is still staging -- this is the
+  // actual fix for "how do I know when I should send it": before, a chip
+  // that wasn't finished preparing yet was indistinguishable from a ready
+  // one, so nothing stopped sending too early.
+  const hasPendingAttachments = attachments.some((a) => a.status === "staging");
+  // The chip itself always shows its own reason too (see AttachmentTray), but
+  // that caption is small and easy to miss, and it alone was previously the
+  // ONLY explanation for why Send had gone gray -- surfaced here as well, in
+  // the same place every other send-blocking reason already appears.
+  const attachmentErrorMessage = attachments.find((a) => a.status === "error")?.error ?? null;
 
   const submit = () => {
     if (streaming || disabled) return;
-    if (hasAttachmentErrors) return;
+    if (hasAttachmentErrors || hasPendingAttachments) return;
     if (!value.trim() && attachments.length === 0) return;
     const metas: AttachmentMeta[] = attachments
       .filter((a): a is DraftAttachment & { prepared: NonNullable<DraftAttachment["prepared"]> } => Boolean(a.prepared))
       .map((a) => a.prepared.meta);
-    const result = onSend(value, metas);
+    // Bug report: sending a photo with nothing typed did nothing at all --
+    // Send looked clickable (an attachment alone satisfies the guard above),
+    // but the text reaching validateDraft() was still empty, which it
+    // unconditionally refuses. Rather than teach validation to special-case
+    // "blank but has attachments," a real fallback question is substituted
+    // here so what actually gets sent -- and shown in the transcript -- is
+    // a genuine question, exactly like asking "what's in this photo?"
+    // by hand. Only applies when nothing was typed; real text is untouched.
+    const text = value.trim() ? value : defaultPromptForAttachments(attachments);
+    const result = onSend(text, metas);
     if (result.ok) {
       setValue("");
       setRejection(null);
@@ -196,7 +250,7 @@ export function MessageComposer({
     : conversationFull
       ? draftRejectionMessage({ ok: false, reason: "conversationFull", limit: MAX_MESSAGES })
       : null;
-  const notice = capNotice ?? rejection;
+  const notice = capNotice ?? rejection ?? attachmentErrorMessage;
   const blocked = conversationFull || hasOversizedHistoryMessage;
 
   return (
@@ -315,7 +369,13 @@ export function MessageComposer({
               <button
                 aria-label="Send message"
                 className="focus-glass flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/90 bg-gradient-to-tr from-white/35 to-white/70 text-[#1a1c22] shadow-sm backdrop-blur-md transition-all disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={disabled || (!value.trim() && attachments.length === 0) || blocked || hasAttachmentErrors}
+                disabled={
+                  disabled ||
+                  (!value.trim() && attachments.length === 0) ||
+                  blocked ||
+                  hasAttachmentErrors ||
+                  hasPendingAttachments
+                }
                 onClick={submit}
                 title={disabled ? disabledReason : undefined}
                 type="button"

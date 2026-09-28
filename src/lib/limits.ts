@@ -113,8 +113,17 @@ export function draftRejectionMessage(rejection: DraftRejection): string {
 
 /** Files per message. */
 export const MAX_ATTACHMENTS = 3;
-/** Per-file cap, raw bytes (pre-base64). */
-export const MAX_ATTACHMENT_BYTES = 1_000_000;
+/**
+ * Per-file cap, raw bytes (pre-base64). Set equal to the combined budget
+ * below rather than some stricter fraction of it -- the combined check
+ * already enforces the real platform ceiling for the multi-file case, so a
+ * single attachment (the common "add a photo" case) has no reason to be
+ * capped any tighter than that. A typical modern phone photo (2-8MB) will
+ * still often exceed even this; `attachments.ts`'s `downscaleImageIfNeeded`
+ * is what actually makes those work by recompressing before this check ever
+ * runs, rather than this number being raised further.
+ */
+export const MAX_ATTACHMENT_BYTES = 2_200_000;
 /** Combined cap across every attachment on one message, raw bytes. */
 export const MAX_ATTACHMENTS_TOTAL_BYTES = 2_200_000;
 /** Extracted text length cap for a single text/code attachment. */
