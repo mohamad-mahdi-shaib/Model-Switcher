@@ -45,6 +45,15 @@ body {
      regardless of this setting. See MessageList.tsx/Markdown.tsx for exactly
      which elements read this variable. */
   --text-scale: 1;
+  /* Full-width pass: the reading column shared by the transcript and the
+     composer (MessageList.tsx / MessageComposer.tsx). The main panel itself
+     now spans the whole viewport, which is what the layout should do -- but
+     a line of prose should not be 1600px wide, and a composer that spans a
+     wide panel while the answers it sends sit in a narrower column reads as
+     two different documents. One value, read by both, so they can never
+     drift apart. Sized to the widest thing the transcript actually draws:
+     an assistant row (28px avatar + 14px gap + its own 680px content cap). */
+  --content-column: 740px;
 }
 .workspace-root[data-text-size="small"] {
   --text-scale: 0.88;
@@ -53,12 +62,77 @@ body {
   --text-scale: 1.18;
 }
 
-.workspace-root[data-preset="obsidian"] {
+/* Aurora Colors -- the one dark-tone wallpaper, replacing the removed Smoky
+   Obsidian. Retuned (darker/purple pass, then again for stronger colour and
+   a darker ground) from its first version, which sat on a blue-navy ground
+   with teal leading: the ground is now very near black with a plum cast, the
+   colour fields are run at roughly double their original strength, and
+   violet/purple leads with magenta and a single cool cyan-teal accent as the
+   counterpoint. Strong colour on an almost-black ground is what keeps the
+   saturation from reading as a wash -- raising the alphas alone, over a
+   lighter ground, would have greyed the whole thing out. That combination -- deep neutral-violet base,
+   one saturated violet-to-magenta sweep, one cold highlight -- is what
+   keeps it reading as a modern aurora rather than a generic blue gradient.
+
+   Five colour fields, every one anchored OFF a corner or edge, each with a
+   mid stop so it carries real colour a good way inward before falling off --
+   the first version held them to the outer eighth of the canvas, which was
+   right when the workspace was a 1360px card with wallpaper showing all
+   around it, and wrong now that the glass panels span the viewport and the
+   wallpaper is seen almost entirely THROUGH them. The centre still resolves
+   to the darkest part of the base gradient, so the conversation keeps a deep
+   ground under it, and the light ink Clear Glass renders (with no text shadow
+   at all) keeps its contrast.
+
+   Pure CSS: no image request, no canvas, no per-frame JS. The colour
+   transitions MOVE via the three ambient orbs this preset declares (see
+   .aurora-orb below), which is three GPU-composited transforms rather than
+   anything repainting this gradient stack. */
+.workspace-root[data-preset="aurora"] {
   background:
-    radial-gradient(ellipse at 85% 20%, rgba(110, 130, 175, 0.4) 0%, transparent 50%),
-    radial-gradient(circle at 15% 75%, rgba(65, 80, 120, 0.35) 0%, transparent 55%),
-    radial-gradient(circle at 50% 40%, rgba(40, 48, 68, 0.6) 0%, transparent 70%),
-    linear-gradient(145deg, #0d1117 0%, #161b26 30%, #1e2433 60%, #10141d 100%);
+    radial-gradient(ellipse 86% 60% at 4% -4%, rgba(34, 211, 238, 0.5) 0%, rgba(34, 211, 238, 0.14) 46%, rgba(34, 211, 238, 0) 78%),
+    radial-gradient(ellipse 84% 62% at 92% -4%, rgba(139, 92, 246, 0.68) 0%, rgba(139, 92, 246, 0.2) 48%, rgba(139, 92, 246, 0) 80%),
+    radial-gradient(ellipse 88% 70% at 100% 96%, rgba(192, 38, 211, 0.6) 0%, rgba(192, 38, 211, 0.18) 46%, rgba(192, 38, 211, 0) 80%),
+    radial-gradient(ellipse 80% 64% at -4% 100%, rgba(109, 40, 217, 0.64) 0%, rgba(109, 40, 217, 0.2) 46%, rgba(109, 40, 217, 0) 78%),
+    radial-gradient(ellipse 64% 48% at 44% 114%, rgba(45, 212, 191, 0.36) 0%, rgba(45, 212, 191, 0) 72%),
+    linear-gradient(162deg, #010004 0%, #05030c 30%, #090513 56%, #020105 100%);
+}
+
+/* The aurora's motion. Three large, heavily blurred orbs (declared per preset
+   in `@/lib/backgrounds`) drift on a long, offset loop, so the colour fields
+   breathe past each other instead of holding one fixed arrangement.
+
+   Only `transform` and `opacity` animate -- both compositor-only properties, so
+   the blur behind them is rasterised once and never re-run per frame. Durations
+   are deliberately long (34-58s) and offset by negative delays, so no two orbs
+   ever share a phase and nothing reads as a loop. `mix-blend-mode: screen`
+   (applied per orb, in the orb data) is what makes them add light on the dark
+   ground rather than wash it grey. */
+@keyframes aurora-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.82;
+  }
+  50% {
+    transform: translate3d(3.5%, -2.5%, 0) scale(1.07);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.82;
+  }
+}
+.aurora-orb {
+  animation: aurora-drift 34s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.aurora-orb-2 {
+  animation-duration: 46s;
+  animation-delay: -9s;
+}
+.aurora-orb-3 {
+  animation-duration: 58s;
+  animation-delay: -21s;
 }
 
 /* Settings pass: renamed from `marble` to `pearl` (Backgrounds reduced to
@@ -83,16 +157,12 @@ body {
    backdrop is unreadable.
 -------------------------------------------------------------------------- */
 
-.workspace-root[data-preset="champagne-luxury"] {
-  background-image: url("/backgrounds/champagne-luxury.svg");
-}
-
 .workspace-root[data-tone="light"] {
   --ink: #1a1c22;
   /* Settings pass: darkened from #383c46/#454a56. The sidebar drawer now
      uses the see-through `.optical-glass` material (matching the chosen
      background) rather than the previous near-opaque one, and on the
-     lighter/busier presets (Pearl, Champagne Luxury) the old, lighter
+     lighter/busier preset (Pearl) the old, lighter
      muted/subtle inks -- inactive conversation rows, section labels, the
      search placeholder -- read as genuinely low-contrast, not merely
      de-emphasised. Both are still one and two steps lighter than --ink, so
@@ -124,6 +194,12 @@ body {
      the text itself. */
   --diffusion-fill: rgba(255, 255, 255, 0.05);
   --glint-color: rgba(255, 255, 255, 0.32);
+  /* Scrollbar. Previously a hard-coded white thumb for both tones, which on
+     a LIGHT preset was white-on-pale -- effectively invisible, so there was
+     no indication a transcript had more above or below. Ink-derived here,
+     so the thumb is always a step darker/lighter than whatever it sits on. */
+  --scroll-thumb: rgba(26, 28, 34, 0.26);
+  --scroll-thumb-hover: rgba(26, 28, 34, 0.45);
   /* Assistant pane. Not a fill: --asheet-rim only lifts the extreme edge of a
      radial that is transparent through the centre. The edge tokens grade the
      1px ring -- lit top-left, soft sides, darker lower-right -- so it reads as
@@ -162,6 +238,8 @@ body {
   --modal-border: rgba(255, 255, 255, 0.5);
   --diffusion-fill: rgba(8, 10, 14, 0.13);
   --glint-color: rgba(255, 255, 255, 0.42);
+  --scroll-thumb: rgba(255, 255, 255, 0.26);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.45);
   --asheet-rim: rgba(255, 255, 255, 0.04);
   --asheet-edge-lit: rgba(255, 255, 255, 0.52);
   --asheet-edge-soft: rgba(255, 255, 255, 0.15);
@@ -212,26 +290,6 @@ body {
     inset 0 -1.5px 2.5px rgba(0, 0, 0, 0.2),
     inset 0 0 16px rgba(255, 255, 255, 0.32);
   position: relative;
-}
-
-/* Settings pass: the workspace panel's own colour now follows the chosen
-   background instead of always being a flat white tint -- Pearl and
-   Obsidian are already close enough to neutral that white reads correctly
-   on both, but Champagne Luxury is a genuinely warm gold/cream palette,
-   and a plain white overlay on top of it read as a slightly cool, washed
-   mismatch rather than belonging to the same picture. Same structure as
-   the base rule above (same stop positions/alpha values), only the tint
-   colour itself changes, from white (255,255,255) to a warm champagne
-   gold matching the background artwork's own line-work colour. */
-.workspace-root[data-preset="champagne-luxury"] .optical-glass {
-  background: linear-gradient(
-    135deg,
-    rgba(214, 179, 110, 0.16) 0%,
-    rgba(214, 179, 110, 0.035) 40%,
-    rgba(214, 179, 110, 0.07) 70%,
-    rgba(214, 179, 110, 0.13) 100%
-  );
-  border-color: rgba(214, 179, 110, 0.55);
 }
 
 /* The mobile sidebar drawer (ConversationSidebar.tsx's MobileDrawer) carries
@@ -394,30 +452,26 @@ body {
   box-shadow: 0 2px 44px -16px rgba(0, 0, 0, 0.22);
 }
 
-/* Same reasoning as the classic-mode Champagne Luxury override above,
-   applied to Clear Glass's own separate background definition (Tier 1
-   uses a different two-layer construction than the base rule, so this
-   mirrors ITS stops/alphas, not the base rule's). Four class-level
-   selectors, correctly more specific than Tier 1 alone (three), so this
-   wins only when both Clear Glass AND Champagne Luxury are active, and
-   never touches Tier 1's own tuning for Pearl/Obsidian. */
-.workspace-root[data-glass="ultra"][data-preset="champagne-luxury"] .optical-glass {
-  background:
-    linear-gradient(
-      118deg,
-      rgba(214, 179, 110, 0) 17%,
-      rgba(214, 179, 110, 0.05) 33%,
-      rgba(214, 179, 110, 0.03) 45%,
-      rgba(214, 179, 110, 0) 61%
-    ),
-    linear-gradient(
-      125deg,
-      rgba(214, 179, 110, 0.12) 0%,
-      rgba(214, 179, 110, 0.03) 30%,
-      rgba(214, 179, 110, 0.01) 62%,
-      rgba(214, 179, 110, 0.07) 100%
-    );
-  border-color: rgba(214, 179, 110, 0.22);
+/* Aurora, seen through glass. The wallpaper is now almost entirely behind
+   full-width panels, and Clear Glass's own `saturate(1.02)` is deliberately
+   near-neutral -- which on a saturated wallpaper reads as the colour being
+   washed out by the pane rather than lit through it. Raising saturation on
+   this preset only (the same preset-scoped approach the removed luxury
+   artwork used for its own warm tint) brings the violet/magenta/cyan through
+   the panel at close to the strength they have outside it. Blur, tint, edge
+   and every other part of the material are untouched, so this is a colour
+   decision, not a second material.
+
+   Four class-level selectors, so it correctly wins over Tier 1 alone (three)
+   and never applies on Pearl. */
+.workspace-root[data-glass="ultra"][data-preset="aurora"] .optical-glass {
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.45);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.45);
+}
+.workspace-root[data-glass="ultra"][data-preset="aurora"] .glass-input-capsule,
+.workspace-root[data-glass="ultra"][data-preset="aurora"] .glass-btn {
+  backdrop-filter: blur(5px) saturate(1.45);
+  -webkit-backdrop-filter: blur(5px) saturate(1.45);
 }
 
 /* Recurrence of the exact same specificity trap `.optical-glass.fixed`
@@ -437,9 +491,18 @@ body {
   position: fixed;
 }
 
-/* --- Tier 2: sidebar (same language, quieter) ----------------------------- */
+/* --- Tier 2: sidebar, header and footer bars (same language, quieter) -----
+   The layout-restructure pass added a global header bar and a footer bar as
+   their own `.optical-glass` surfaces. They are chrome around the
+   conversation, exactly like the sidebar, so they take the sidebar's grade
+   rather than Tier 1's -- the main panel stays the brightest surface on
+   screen and the edge hierarchy (panel > sidebar/header/footer > composer >
+   buttons) is preserved.
+-------------------------------------------------------------------------- */
 
-.workspace-root[data-glass="ultra"] aside.optical-glass {
+.workspace-root[data-glass="ultra"] aside.optical-glass,
+.workspace-root[data-glass="ultra"] header.optical-glass,
+.workspace-root[data-glass="ultra"] footer.optical-glass {
   --edge-lit: 0.42;
   --edge-soft: 0.2;
   --edge-dark: 0.1;
@@ -521,28 +584,6 @@ body {
       rgba(255, 255, 255, 0) 72%
     );
   }
-}
-
-/* --- Localised text diffusion --------------------------------------------
-   A scrim that sits behind dense text and blurs the BACKGROUND, so the text
-   above it stays fully sharp and fully opaque. Off in Classic, where the panel
-   already diffuses enough.
--------------------------------------------------------------------------- */
-
-.diffusion-scrim {
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* Disabled in Ultra Clear. The brief rules out one large diffusion layer over
-   the whole panel, and this was exactly that -- it also showed as a visible
-   rectangular patch behind the message column. Ultra Clear now relies on ink
-   contrast alone; menus keep their stronger diffusion via .glass-modal.
-   The element stays in the DOM, inert, so re-enabling is a one-value change if
-   a busy Luxury background turns out to need it. */
-.workspace-root[data-glass="ultra"] .diffusion-scrim {
-  opacity: 0;
 }
 
 .glass-btn {
@@ -638,28 +679,56 @@ body {
   box-shadow: 0 0 0 4px var(--focus-halo);
 }
 
-/* --- Scroll area --------------------------------------------------------- */
+/* --- Scroll area ----------------------------------------------------------
+   One slim, tone-aware bar, never the browser's default chrome.
+
+   Three things changed in the scrollbar pass:
+   - Colour comes from `--scroll-thumb` (per tone, above) instead of a fixed
+     white. White-on-white meant the light preset effectively had no visible
+     scrollbar at all, so a long transcript gave no hint it continued.
+   - Narrower: 8px -> 6px of track, with the thumb inset 1.5px inside it, so
+     the bar reads as part of the glass rather than a chrome gutter.
+   - It fades in. At rest the thumb is faint; hovering the scrollable area
+     (or dragging the bar) brings it to full strength, so the conversation is
+     never framed by a permanent hard line.
+
+   `scrollbar-width`/`scrollbar-color` cover Firefox; the `::-webkit-` block
+   covers Chrome/Edge/Safari. Both are set: neither alone covers both engines.
+-------------------------------------------------------------------------- */
 
 .glass-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.45) transparent;
+  scrollbar-color: var(--scroll-thumb) transparent;
   overscroll-behavior: contain;
 }
+.glass-scroll:hover,
+.glass-scroll:focus-within {
+  scrollbar-color: var(--scroll-thumb-hover) transparent;
+}
 .glass-scroll::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
+  height: 6px;
 }
 .glass-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 .glass-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.4);
+  background: var(--scroll-thumb);
   border-radius: 9999px;
-  border: 2px solid transparent;
+  border: 1.5px solid transparent;
+  background-clip: content-box;
+  transition: background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.glass-scroll:hover::-webkit-scrollbar-thumb,
+.glass-scroll:focus-within::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb-hover);
   background-clip: content-box;
 }
-.glass-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.6);
-  background-clip: content-box;
+/* The corner where a vertical and horizontal bar would meet (a wide code
+   block inside a scrolling transcript) -- left as glass, not the default
+   opaque square. */
+.glass-scroll::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -927,14 +996,15 @@ body {
    rim-weighted wash that leaves the centre clear, and a graded 1px edge drawn
    as a masked ring -- lit along the top-left, soft down the sides, darker on
    the lower-right contour, with two short specular hits rather than a
-   continuous glow. Scoped entirely to .assistant-surface; the shared
-   Glowy/Clear material definitions are untouched.
+   continuous glow. Scoped entirely to .assistant-surface; the shared Clear
+   Glass material definitions are untouched.
 -------------------------------------------------------------------------- */
 
 /* Clear Glass is the thinnest, clearest grade: the centre wash drops to almost
    nothing and the ring is finer, so the pane is announced by its edge alone.
-   Glowy Glass (the default above) keeps a slightly softer, more luminous edge.
-   Neither is filled. */
+   It is not filled. (The tone blocks above declare the same tokens for any
+   surface rendered outside this material; these are the values that actually
+   apply, since Clear Glass is now the only material.) */
 .workspace-root[data-glass="ultra"][data-tone="light"] {
   --asheet-rim: rgba(255, 255, 255, 0.028);
   --asheet-edge-lit: rgba(255, 255, 255, 0.62);
@@ -1211,6 +1281,11 @@ body {
   }
   .gold-orbit {
     display: none;
+  }
+  /* The aurora wallpaper holds one fixed arrangement instead of drifting.
+     Its gradients and orbs are unchanged -- only the motion stops. */
+  .aurora-orb {
+    animation: none;
   }
   /* No height collapse either: the row just fades. */
   .typing-exit {

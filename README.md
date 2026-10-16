@@ -9,9 +9,26 @@ acceptance run on 2026-09-21 streamed real answers from GPT and Gemini in one
 conversation, carried context across providers, and survived a refresh. See
 "Provider status" below.
 
-Desktop only for this version — mobile is out of scope for this submission. This is a scope decision, not something the brief asked for or deferred; the brief never mentions mobile at all.
+**Responsive.** The workspace lays out as a header, a sidebar, and a main
+content region with a sticky composer, and is verified at 360x800, 390x844,
+844x390 (landscape), 768x1024, 1024x768, 1366x768 and 1680x1050 — no horizontal
+overflow at any of them. Below 1024px the sidebar becomes a focus-trapped
+drawer opened from the header; at and above it, the sidebar is inline and
+collapsible from the same control.
 
 ---
+
+## Prerequisites
+
+| | |
+| --- | --- |
+| Node.js | **24.x** (pinned in `package.json` -> `engines`) |
+| npm | ships with Node 24 |
+| A provider key | at least one of `GEMINI_API_KEY` / `OPENAI_API_KEY` for live answers |
+| Chrome | only for the optional real-browser suites in `tests/browser/` |
+
+No database, no Docker, no other service. Everything else installs with
+`npm install`.
 
 ## Setup
 
@@ -131,8 +148,16 @@ src/
     gemini.ts                the only file importing @google/genai
     openai.ts                the only file that knows the OpenAI wire format
     registry.ts              id -> adapter dispatch
-  components/workspace/      WorkspaceLayout, ChatHeader, ConversationSidebar,
-                             MessageList, MessageComposer, Markdown, BackgroundPicker
+  components/workspace/
+    WorkspaceLayout.tsx      state container + composition root (owns ALL state)
+    AppShell.tsx             the layout itself: header / sidebar / main slots
+    AppHeader.tsx            global header: sidebar toggle, brand, title, Settings
+    ConversationSidebar.tsx  side navigation: search, New chat, history, drawer
+    MessageList.tsx          the transcript (its own scroll region)
+    MessageComposer.tsx      the sticky composer at the bottom of main
+    ProviderMenu.tsx         provider switcher + switch confirmation dialog
+    SettingsPanel.tsx        the one Settings overlay (Appearance lives here)
+    Markdown.tsx, AttachmentTray.tsx
   lib/
     chat.ts                  shared contract (server + client)
     use-conversations.ts     conversation + streaming state machine
@@ -140,7 +165,7 @@ src/
     conversations.ts         title derivation, recency grouping
     markdown.ts              safe Markdown -> AST
     providers.ts             client provider registry + identity
-    backgrounds.ts           8 backgrounds, 2 glass styles
+    backgrounds.ts           2 wallpapers, 1 glass style, ambient orb data
     limits.ts                shared input/conversation length limits (client + server)
 ```
 
@@ -156,6 +181,27 @@ a fault arising mid-answer can be reported without discarding delivered text.
 **Streaming safety.** Each request is tagged with a request id *and* a
 conversation id. Chunks arriving after an abort, or for a conversation the user
 has left, are dropped rather than written into whatever is on screen.
+
+### Layout regions
+
+`AppShell` arranges three real landmarks, and owns nothing else:
+
+| Region | Element | Contents |
+| --- | --- | --- |
+| Header | `<header>` | sidebar toggle, brand mark, active conversation title, Settings — the only Settings trigger in the app |
+| Sidebar | `<aside>` | search, New chat, conversation history, storage warnings. Inline at >=1024px (collapsible), a portaled drawer below that |
+| Main | `<main>` | the transcript (scrolls independently) and the composer (sticky at the bottom, never overlapped) |
+
+Both the transcript and the composer are centred on one shared reading column
+(`--content-column` in `globals.css`), so the input always lines up with the
+conversation it belongs to while the panels themselves span the viewport.
+
+Every overlay — the sidebar drawer, Settings, the provider switch dialog — is
+portaled to the shell's own outermost element, which carries no
+`backdrop-filter`/`transform` of its own. That is deliberate: any of those
+properties would make it the containing block for `position: fixed`
+descendants, and a full-viewport backdrop would be clipped to a glass panel
+instead of covering the screen.
 
 ---
 
@@ -188,7 +234,7 @@ server-side persistence and no sync between devices.
 npm test
 ```
 
-188 tests, no network access and no model quota consumed:
+199 tests, no network access and no model quota consumed:
 
 - **Markdown** — safety (`javascript:` / `data:` links stripped, HTML never
   treated as markup) and streaming stability (every prefix of a fenced block
@@ -215,7 +261,20 @@ all model traffic mocked at `window.fetch` and the real provider domains
 additionally blocked at Chrome's own network layer as a fail-closed backstop.
 The harness is committed at `tests/browser/` (see its own `README.md`) rather
 than kept in a private scratchpad, and is run on demand, separately from
-`npm test`. See `docs/requirements-audit.md` for the requirement-by-requirement
+`npm test`. Each file needs a dev server already running at `BASE_URL`
+(default `http://localhost:3000`) and a local Chrome:
+
+```bash
+npm run dev                                  # in another terminal
+node tests/browser/verify.mjs                #  75 checks — core flows
+node tests/browser/verify-settings.mjs       #  71 checks — Settings + appearance
+node tests/browser/verify-responsive.mjs     # 100 checks — 7 viewports
+node tests/browser/verify-search.mjs         #  16 checks — conversation search
+node tests/browser/verify-dialog-hit-testing.mjs   # 8 checks — real pointer hit-testing
+node tests/browser/verify-network-isolation.mjs    # 4 checks — fail-closed proof
+```
+
+All six pass against the current build (274 checks total). See `docs/requirements-audit.md` for the requirement-by-requirement
 evidence.
 
 ---
@@ -252,36 +311,57 @@ and disabled, and cannot originate a request.
 
 ---
 
-## Backgrounds
+## Appearance
 
-Eight presets in two collections. Seven are local SVG artwork or CSS gradients.
-One, **Luxury Salon**, is a photograph.
+Appearance is reachable **only** from Settings (the gear in the global header).
+There are no appearance controls anywhere in the chat interface itself.
 
-| | |
-| --- | --- |
-| File | `public/backgrounds/luxury-salon.jpg` (2000x1335, ~284 KB) |
-| Source | [Chairs in a meeting room (Unsplash)](https://commons.wikimedia.org/wiki/File:Chairs_in_a_meeting_room_(Unsplash).jpg) on Wikimedia Commons |
-| Original | <https://unsplash.com/photos/DEdM9Vs6s8w> |
-| Licence | **CC0 1.0** - Creative Commons Zero, Public Domain Dedication. No attribution required; credited here anyway. |
+### Wallpapers
 
-The file is **bundled locally and never hotlinked**, so no request leaves the
-origin at runtime. Two adjustments were made to the source, both recorded in
-`makeasset` notes and disclosed here rather than passed off as the original
-frame:
+Two, both pure CSS — no image request, no canvas, no per-frame JavaScript:
 
-1. A small printed card carrying a logo sat on the table. It is patched out
-   with a slice of the same wall, because the background must carry no text or
-   logos.
-2. A gamma lift, a small wash toward warm white and slight desaturation. The
-   raw frame has a deep orange-brown floor across its lower half; dark ink over
-   it measured **2.81:1**, under the 4.5:1 floor. Lifting the shadows fixes that
-   and moves the frame toward the warm white palette the preset is for. After
-   the pass the same text measures **5.07:1**, with the room still clearly
-   readable through the panels.
+| Wallpaper | Tone | Treatment |
+| --- | --- | --- |
+| **Pearl** (default) | light | cool veined silver and slate; layered radial gradients plus four static ambient orbs |
+| **Aurora Colors** | dark | violet and cyan along the top, purple and magenta sweeping the lower corners, over a near-black plum ground. Three large blurred orbs drift on long, offset loops (34s/46s/58s), blended with `mix-blend-mode: screen` |
 
-Clear Glass + Luxury Salon reuses the Pearl Studio material rules rather than
-restating them: each selector gained a second preset, so there is one place to
-tune the material and no competing override. Glowy Glass keeps its own.
+Aurora's colour fields are anchored off the edges and corners so the centre of
+the canvas — where the conversation sits — stays deep, which is what keeps the
+light ink readable while the wallpaper stays saturated. Its drift animates only
+`transform` and `opacity` (compositor-only, so the blur behind them is
+rasterised once), and stops entirely under `prefers-reduced-motion`.
+
+A previous revision shipped eight wallpapers, then three (Pearl, Smoky
+Obsidian, Champagne Luxury). Obsidian and Champagne Luxury were removed by
+request. **Every id this app has ever saved still resolves to a real current
+one** (`migrateBackgroundId` in `src/lib/backgrounds.ts`): each removed
+wallpaper maps to the nearest surviving treatment rather than all collapsing
+onto the default — `obsidian` -> `aurora`, `champagne-luxury`/`marble` ->
+`pearl` — so an existing browser's saved preference is never dropped or left
+invalid.
+
+### Glass
+
+**Clear Glass** is the only glass style. The second material this project used
+to offer ("Glowy Glass", internal id `classic`) was removed along with its
+option, its default, and its stylesheet tuning; a saved `classic` migrates to
+Clear Glass. The internal key stays `ultra` because `globals.css` selects the
+whole material on `[data-glass="ultra"]` and those selectors are what give its
+rules their specificity — the label has deliberately never tracked the key.
+
+The material itself is unchanged: one surface definition applied at graded
+strength (main panel > sidebar/header > composer > buttons), where the *edge*
+does the work rather than fill or glow, plus a pointer-tracking glint on the
+main panel.
+
+### Text size
+
+Small / Default / Large, applied as a unitless `--text-scale` multiplier to
+conversation **text only** — never to navigation chrome, buttons or labels.
+
+All of it (wallpaper, glass, text size, personalizations, read-aloud voice and
+rate) is saved to `localStorage` under `model-switcher:settings` with the same
+versioned, field-by-field-validating approach used for conversations.
 
 ## Switching providers
 
@@ -298,6 +378,48 @@ selection underneath it would misattribute the answer.
 Each assistant message records the provider that produced it, so switching does
 not retroactively re-label earlier answers. A failed turn retries to the
 provider it was originally sent to rather than being silently rerouted.
+
+## Deploying to Vercel
+
+The app is a standard Next.js App Router project with one dynamic route
+(`/api/chat`); no adapter, custom server or build configuration is needed.
+
+**Environment variables must be set in the Vercel project, not in the repo.**
+`.env.local` is git-ignored and never uploaded, so a deployment with no
+variables configured will build and serve normally but report every provider as
+not configured. Add, for each environment you want working (Production,
+Preview, Development):
+
+| Name | Required | Notes |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | for Gemini | server-side only |
+| `OPENAI_API_KEY` | for OpenAI | server-side only |
+| `GEMINI_MODEL` | no | overrides the `gemini-3.6-flash` default |
+| `OPENAI_MODEL` | no | overrides the `gpt-5.6-luna` default |
+
+None of them may be renamed to `NEXT_PUBLIC_*`: that prefix is what makes a
+variable part of the browser bundle, and these are credentials.
+
+Two ways to deploy:
+
+1. **Git integration (recommended).** Connect the GitHub repository to a Vercel
+   project and set the Production Branch to `main`. Every push to that branch
+   then builds and promotes automatically.
+2. **CLI.** From the project root, with the Vercel CLI installed and logged in:
+
+   ```bash
+   npx vercel        # preview deployment
+   npx vercel --prod # promote to the production URL
+   ```
+
+   The link lives in `.vercel/project.json`, which is git-ignored — a CLI
+   deployment publishes whatever is in the working directory at that moment,
+   **not** whatever is committed. If the deployed site looks out of date, check
+   which of the two paths above is actually in use before re-deploying: a
+   project with no Git integration never updates on a push.
+
+Redeploy after changing an environment variable — Vercel injects them at build
+time, so an existing deployment keeps the values it was built with.
 
 ## Limitations
 
@@ -318,6 +440,14 @@ provider it was originally sent to rather than being silently rerouted.
 - **Free-tier quota.** `gemini-3.6-flash` allows 20 requests/day per project on
   the free tier. When exhausted the UI reports the limit, scope and Google's own
   retry delay.
+- **History is per-browser.** Conversations live in `localStorage` only — there
+  is no account, no server-side persistence and no sync between devices or
+  browsers. Clearing site data clears them. Settings behave the same way.
+- **Export is one-way.** Conversations export to a readable PDF; there is no
+  import path back.
+- **Read aloud depends on the device.** It uses the browser's own speech
+  synthesis, so available voices (including for Arabic) vary by platform, and
+  it is unavailable where the browser provides none.
 - **Mobile out of scope.** The sidebar is hidden below the `md` breakpoint. Not something the brief asked for or planned around — it simply never mentions mobile.
 - **Input and conversation limits.** Messages over 16,000 characters are refused client-side before they ever enter history, with the actual limit named; a conversation reaching 50 messages surfaces the real cap and offers a working path to a new conversation.
 - **Markdown subset.** Paragraphs, headings, lists, inline code, fenced code,

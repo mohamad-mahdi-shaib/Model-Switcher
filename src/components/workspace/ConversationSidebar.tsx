@@ -4,11 +4,9 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertIcon,
-  GearIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
-  SparklesIcon,
   TrashIcon,
   XIcon,
 } from "@/components/icons";
@@ -28,7 +26,7 @@ type ConversationSidebarProps = {
    * Interaction refinement: this supersedes the previous pass's
    * always-visible compact rail. Below `lg` (1024px -- mobile AND narrow
    * tablet) the sidebar is a closed-by-default portaled drawer, opened only
-   * by the header's own toggle button (`ChatHeader.tsx` / `WorkspaceLayout`
+   * by the global header's toggle button (`AppHeader.tsx`/`WorkspaceLayout`
    * -- there is no longer an in-sidebar trigger to open it, since nothing
    * inside this component is visible until it is already open). `mobileOpen`
    * is that drawer's open state; `desktopSidebarCollapsed` is the
@@ -38,21 +36,6 @@ type ConversationSidebarProps = {
   onMobileClose: () => void;
   desktopSidebarCollapsed: boolean;
   portalContainer: HTMLElement | null;
-  /**
-   * Settings pass: this component only owns the TRIGGER now (aria-expanded
-   * state + the click that opens it) -- the actual overlay is rendered once,
-   * directly by `WorkspaceLayout`, as `SettingsOverlay`
-   * (`SettingsPanel.tsx`), decoupled entirely from the sidebar/drawer's own
-   * mount lifecycle. See that component's own comment for why: nesting the
-   * previous Settings surfaces inside `SidebarBody` was the actual cause of
-   * a real bug (Settings could open the moment the drawer that contained
-   * its trigger closed, with nothing left mounted to show it). Lifted
-   * state, shared by both triggers below (the full sidebar's own footer and
-   * the mobile drawer's footer -- both render the same `SidebarBody`)
-   * rather than a separate copy per layout.
-   */
-  settingsOpen: boolean;
-  onSettingsOpenChange: (open: boolean) => void;
   /**
    * Interaction refinement: local search over conversation titles and
    * saved message text (`@/lib/search`). Lifted to WorkspaceLayout, like
@@ -293,8 +276,6 @@ function SidebarBody({
   searchQuery,
   onSearchQueryChange,
   onSelectSearchResult,
-  settingsOpen,
-  onSettingsOpenChange,
 }: SidebarBodyProps) {
   const groups = groupByRecency(conversations);
   const note = STORAGE_NOTE[storageStatus];
@@ -314,15 +295,10 @@ function SidebarBody({
 
   return (
     <>
-      <div className="flex items-center gap-2.5 px-0.5 pt-0.5">
-        <span className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-white/80 bg-white/25 shadow-sm backdrop-blur-md">
-          <span className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-white/40 to-transparent" />
-          <SparklesIcon className="relative z-10 h-3.5 w-3.5 glass-text-dark" strokeWidth="2.2" />
-        </span>
-        <span className="text-[13px] font-semibold tracking-wide uppercase glass-text-dark">
-          AI Workspace
-        </span>
-      </div>
+      {/* Layout-restructure pass: the brand mark that used to open this body
+          now lives in the global header (`AppHeader.tsx`), where it is
+          visible whether or not the sidebar is open. This region is purely
+          the conversation list and the two actions that operate on it. */}
 
       {/* Interaction refinement: local search, above New chat, per the
           task's own ordering ("Search chats, New chat, saved
@@ -410,10 +386,6 @@ function SidebarBody({
       ) : null}
 
       <div className="relative min-h-0 flex-1">
-        <div
-          aria-hidden="true"
-          className="diffusion-scrim absolute -inset-x-2 -inset-y-1 rounded-[18px]"
-        />
         {searching ? (
           <SearchResultsList
             activeIndex={clampedIndex}
@@ -457,27 +429,6 @@ function SidebarBody({
           </nav>
         )}
       </div>
-
-      {/* Responsive UI refinement (placement pass): a footer, not part of
-          the scrollable nav above, so it stays reachable regardless of how
-          far the conversation list has scrolled. Reused by both the full
-          sidebar and the mobile drawer, since both render this same
-          SidebarBody -- this button only OPENS Settings now (the overlay
-          itself is rendered once, elsewhere; see `WorkspaceLayout.tsx`'s
-          own `SettingsOverlay`), so it is harmless for both copies to
-          render it. */}
-      <div className="relative shrink-0">
-        <button
-          aria-expanded={settingsOpen}
-          aria-haspopup="dialog"
-          className="glass-btn focus-glass flex h-11 w-full items-center justify-center gap-1.5 rounded-xl text-[12px] font-medium tracking-tight glass-text-dark"
-          onClick={() => onSettingsOpenChange(!settingsOpen)}
-          type="button"
-        >
-          <GearIcon className="h-3.5 w-3.5" />
-          <span>Settings</span>
-        </button>
-      </div>
     </>
   );
 }
@@ -491,7 +442,7 @@ type MobileDrawerProps = Omit<
 
 /**
  * The closed-by-default drawer for mobile and narrow tablet (<lg). Opened
- * only by the header's toggle button (`WorkspaceLayout`/`ChatHeader.tsx`).
+ * only by the global header's toggle button (`WorkspaceLayout`/`AppHeader`).
  * Backdrop + panel portaled together as true DOM siblings, full keyboard
  * focus trap while open, focus restored on close, and selecting a
  * conversation closes the drawer as part of the same action.
@@ -598,8 +549,6 @@ export function ConversationSidebar({
   onMobileClose,
   desktopSidebarCollapsed,
   portalContainer,
-  settingsOpen,
-  onSettingsOpenChange,
   ...body
 }: ConversationSidebarProps) {
   return (
@@ -615,20 +564,21 @@ export function ConversationSidebar({
       {!desktopSidebarCollapsed ? (
         <aside
           aria-label="Conversations"
-          className="optical-glass hidden w-[clamp(200px,20vw,238px)] shrink-0 flex-col gap-4 rounded-[30px] p-[clamp(0.75rem,1.6vw,1.25rem)] lg:flex"
+          // Full-width pass: a fixed, consistent width (and a fixed
+          // padding) rather than the previous `clamp(200px,20vw,238px)`.
+          // A viewport-relative width made the sidebar a different size on
+          // every screen -- and, because it was capped at 238px, it could
+          // never take a sensible share of a wide one. The main panel takes
+          // all remaining width, so this is the only width that needs
+          // deciding.
+          className="optical-glass hidden w-[248px] shrink-0 flex-col gap-3.5 rounded-[24px] p-3 xl:w-[276px] xl:p-3.5 lg:flex"
         >
-          <SidebarBody {...body} onSettingsOpenChange={onSettingsOpenChange} settingsOpen={settingsOpen} />
+          <SidebarBody {...body} />
         </aside>
       ) : null}
 
       {mobileOpen ? (
-        <MobileDrawer
-          onClose={onMobileClose}
-          onSettingsOpenChange={onSettingsOpenChange}
-          portalContainer={portalContainer}
-          settingsOpen={settingsOpen}
-          {...body}
-        />
+        <MobileDrawer onClose={onMobileClose} portalContainer={portalContainer} {...body} />
       ) : null}
     </>
   );

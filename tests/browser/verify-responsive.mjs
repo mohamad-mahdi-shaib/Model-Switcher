@@ -31,7 +31,7 @@
 // Not part of `npm test`; run on demand like this project's other
 // real-browser checks.
 
-import { launch, evaluate, sleep, screenshot, clickAt, pressKey } from "./cdp.mjs";
+import { launch, evaluate, sleep, screenshot, clickAt, pressKey, waitForInteractive } from "./cdp.mjs";
 import { MOCK, SEND, assertMocked } from "./mock.mjs";
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -68,7 +68,7 @@ async function openSeeded(width, height, seed) {
   }
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source });
   await page.send("Page.navigate", { url: BASE_URL });
-  await sleep(1800);
+  await waitForInteractive(page, evaluate);
   await assertMocked(page, evaluate);
   return page;
 }
@@ -124,23 +124,37 @@ async function checkViewport(width, height, isCompact) {
   const overflow = await noOverflow(page);
   log(overflow.scrollWidth <= overflow.clientWidth, `[${label}] no horizontal page overflow`, JSON.stringify(overflow));
 
-  // The header now holds only the toggle + title -- provider selection and
-  // Settings both moved out (see the placement-pass rewrite), so there is
-  // nothing else in its row for a long title to crowd. Truncation only
-  // NEEDS to engage where the header's available width is actually less
-  // than the title's natural width.
+  // Layout-restructure pass: the global header now carries the sidebar
+  // toggle, the brand mark, the conversation title AND the Settings gear,
+  // so the title's own available width is no longer "most of the header" --
+  // it is whatever the fixed-width controls on either side leave it. The
+  // invariant being checked is therefore stated against the title's OWN box
+  // (not the header's): when its natural width exceeds the space it has, it
+  // must truncate rather than clip or push, and either way it must never
+  // overlap the control to its right.
   const title = await evaluate(page, () => {
-    const header = document.querySelector("header");
     const h1 = document.querySelector("h1 span");
-    if (!header || !h1) return null;
-    return { scrollWidth: h1.scrollWidth, clientWidth: h1.clientWidth, headerWidth: header.getBoundingClientRect().width };
+    const gear = document.querySelector('header [aria-label="Settings"]');
+    if (!h1) return null;
+    return {
+      scrollWidth: h1.scrollWidth,
+      clientWidth: h1.clientWidth,
+      truncated: h1.scrollWidth > h1.clientWidth,
+      textOverflow: getComputedStyle(h1).textOverflow,
+      titleRight: h1.getBoundingClientRect().right,
+      gearLeft: gear ? gear.getBoundingClientRect().left : null,
+    };
   });
-  const truncationNeeded = Boolean(title) && title.headerWidth < title.scrollWidth;
   log(
-    Boolean(title) && (truncationNeeded ? title.clientWidth < title.scrollWidth : title.clientWidth === title.scrollWidth),
-    truncationNeeded
-      ? `[${label}] long conversation title truncates (ellipsis engages; header is narrower than the title)`
-      : `[${label}] long conversation title renders in full (header has enough room; no clipping needed)`,
+    Boolean(title) && (title.truncated ? title.textOverflow === "ellipsis" : title.clientWidth >= title.scrollWidth),
+    title && title.truncated
+      ? `[${label}] long conversation title truncates with an ellipsis rather than clipping`
+      : `[${label}] long conversation title renders in full (it fits the space it has)`,
+    JSON.stringify(title),
+  );
+  log(
+    Boolean(title) && (title.gearLeft === null || title.titleRight <= title.gearLeft + 1),
+    `[${label}] the title never runs under the header's Settings control`,
     JSON.stringify(title),
   );
 
@@ -175,7 +189,7 @@ async function checkViewport(width, height, isCompact) {
     );
 
     // Open it via the header's own toggle -> the drawer appears, portaled,
-    // with Search chats / New chat / Settings all reachable and each
+    // with Search chats / New chat all reachable and each
     // meeting the 44px touch target.
     await clickToggle(page);
     const opened = await sidebarMode(page);
@@ -187,8 +201,13 @@ async function checkViewport(width, height, isCompact) {
     // ITS zero-sized copy of these controls instead, first in DOM order.
     const drawerControls = await evaluate(page, () => {
       const dialog = document.querySelector('[role="dialog"][aria-label="Conversations"]');
-      if (!dialog) return ["Search chats", "New chat", "Settings", "Close conversation list"].map((name) => ({ name, found: false }));
-      return ["Search chats", "New chat", "Settings", "Close conversation list"].map((name) => {
+      // Layout-restructure pass: Settings is no longer one of these. Its
+      // trigger moved to the global header, which stays visible whether the
+      // drawer is open or closed, so the drawer deliberately no longer
+      // carries a second copy of it.
+      const names = ["Search chats", "New chat", "Close conversation list"];
+      if (!dialog) return names.map((name) => ({ name, found: false }));
+      return names.map((name) => {
         const el = dialog.querySelector(`[aria-label="${name}"]`) ?? [...dialog.querySelectorAll("button")].find((b) => b.textContent?.trim() === name);
         if (!el) return { name, found: false };
         const r = el.getBoundingClientRect();
@@ -197,7 +216,7 @@ async function checkViewport(width, height, isCompact) {
     });
     log(
       drawerControls.every((c) => c.found),
-      `[${label}] the open drawer contains Search chats, New chat, Settings, and a close control`,
+      `[${label}] the open drawer contains Search chats, New chat, and a close control`,
       JSON.stringify(drawerControls),
     );
     log(
@@ -258,16 +277,14 @@ async function checkViewport(width, height, isCompact) {
     const reexpanded = await sidebarMode(page);
     log(reexpanded.fullSidebarVisible, `[${label}] header toggle re-expands the desktop sidebar`, JSON.stringify(reexpanded));
 
-    // Settings, reachable directly in the always-open sidebar footer, shows
-    // its icon+label and meets the touch target.
-    const settings = await rectOf(page, '[aria-haspopup="dialog"]');
-    const settingsLabelled = await evaluate(page, () => {
-      const btn = document.querySelector('[aria-haspopup="dialog"]');
-      return Boolean(btn) && /Settings/.test(btn.textContent || "");
-    });
+    // Layout-restructure pass: Settings moved from the sidebar footer to
+    // the global header, where it is reachable at every width AND in every
+    // sidebar state -- including the collapsed one just exercised above,
+    // where the sidebar footer's copy was unreachable by construction.
+    const settings = await rectOf(page, 'header [aria-label="Settings"]');
     log(
-      Boolean(settings) && settings.h >= 44 && settingsLabelled,
-      `[${label}] Settings is directly reachable in the sidebar footer with icon+label, meets touch target`,
+      Boolean(settings) && settings.h >= 44 && settings.w >= 44,
+      `[${label}] Settings is reachable in the global header and meets the touch target`,
       JSON.stringify(settings),
     );
   }
@@ -319,7 +336,7 @@ async function checkLongContent(width, height) {
   const page = await launch({ width, height });
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source: MOCK });
   await page.send("Page.navigate", { url: BASE_URL });
-  await sleep(1600);
+  await waitForInteractive(page, evaluate);
   await assertMocked(page, evaluate);
 
   await evaluate(page, () => {
@@ -368,7 +385,7 @@ async function checkResize() {
   const page = await launch({ width: 1366, height: 768 });
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source: MOCK });
   await page.send("Page.navigate", { url: BASE_URL });
-  await sleep(1600);
+  await waitForInteractive(page, evaluate);
   await assertMocked(page, evaluate);
 
   // Start a conversation so there is real transcript state to check for
@@ -441,7 +458,7 @@ async function checkResizeClosesStaleDrawer() {
   const page = await launch({ width: 480, height: 900 });
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source: MOCK });
   await page.send("Page.navigate", { url: BASE_URL });
-  await sleep(1600);
+  await waitForInteractive(page, evaluate);
   await assertMocked(page, evaluate);
 
   await clickToggle(page);
@@ -468,7 +485,7 @@ async function checkPhoneLandscape() {
   const page = await launch({ width, height });
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source: MOCK });
   await page.send("Page.navigate", { url: BASE_URL });
-  await sleep(1600);
+  await waitForInteractive(page, evaluate);
   await assertMocked(page, evaluate);
 
   const overflow = await noOverflow(page);

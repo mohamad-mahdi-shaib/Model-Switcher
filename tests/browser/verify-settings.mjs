@@ -4,8 +4,9 @@
 //     file reproduces it with a REAL pointer click at exactly that width,
 //     confirms it is fixed, and confirms close/reopen/resize/preservation
 //     of workspace state around it.
-//  2. Appearance: exactly three backgrounds, both glass modes, migration
-//     from a removed saved preset, and text-size persistence/effect.
+//  2. Appearance: exactly two backgrounds, the one remaining glass style,
+//     migration from every removed saved preset/glass id, and text-size
+//     persistence/effect.
 //  3. Personalizations: Save/Reset, refresh persistence, and (together with
 //     tests/route.test.ts / tests/gemini.test.ts / tests/openai.test.ts,
 //     which cover the server-side mapping into both adapters' own request
@@ -22,7 +23,7 @@
 // Usage: node tests/browser/verify-settings.mjs
 // Requires a local Chrome and the dev server already running at BASE_URL.
 
-import { launch, evaluate, sleep, screenshot, clickAt } from "./cdp.mjs";
+import { launch, evaluate, sleep, screenshot, clickAt, waitForInteractive } from "./cdp.mjs";
 import { MOCK, assertMocked } from "./mock.mjs";
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -46,28 +47,22 @@ async function open(width, height, seedLocalStorage) {
   }
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source });
   await page.send("Page.navigate", { url: BASE_URL });
-  await sleep(1600);
+  await waitForInteractive(page, evaluate);
   await assertMocked(page, evaluate);
   return page;
 }
 
-async function openSettings(page, width) {
-  if (width < 1024) {
-    const toggle = await evaluate(page, () => {
-      const btn = document.querySelector('[aria-label="Open conversation list"]');
-      if (!btn) return null;
-      const r = btn.getBoundingClientRect();
-      return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
-    });
-    if (toggle) {
-      await clickAt(page, toggle.cx, toggle.cy);
-      await sleep(450);
-    }
-  }
+/**
+ * Layout-restructure pass: Settings is one trigger in the global header,
+ * visible at every width. This helper used to have to open the sidebar
+ * drawer first below 1024px, because the only trigger lived in the
+ * sidebar's own footer -- which is exactly the coupling that produced the
+ * bug this file was written for.
+ */
+async function openSettings(page) {
   const settingsBtn = await evaluate(page, () => {
-    const btns = [...document.querySelectorAll('[aria-haspopup="dialog"]')].filter((b) => b.offsetParent !== null);
-    const btn = btns[0];
-    if (!btn) return null;
+    const btn = document.querySelector('header [aria-label="Settings"]');
+    if (!btn || btn.offsetParent === null) return null;
     const r = btn.getBoundingClientRect();
     return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
   });
@@ -109,7 +104,7 @@ async function checkBugFix(width, height, label) {
     return true;
   });
 
-  const opened = await openSettings(page, width);
+  const opened = await openSettings(page);
   log(opened, `[${label}] a Settings trigger is reachable with a real pointer click`);
 
   const state = await dialogState(page);
@@ -131,7 +126,7 @@ async function checkBugFix(width, height, label) {
   let after = await dialogState(page);
   log(!after.present, `[${label}] the Close button actually closes Settings`, JSON.stringify(after));
 
-  await openSettings(page, width);
+  await openSettings(page);
   await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
   await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
   await sleep(450);
@@ -139,7 +134,7 @@ async function checkBugFix(width, height, label) {
   log(!after.present, `[${label}] Escape closes Settings`, JSON.stringify(after));
 
   // Reopen, close via backdrop click.
-  await openSettings(page, width);
+  await openSettings(page);
   await evaluate(page, () => {
     const backdrops = [...document.querySelectorAll('[aria-hidden="true"].fixed.inset-0')];
     backdrops[backdrops.length - 1]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -167,7 +162,7 @@ async function checkBugFix(width, height, label) {
 /* ====================================================================== */
 async function checkResizeWhileOpen() {
   const page = await open(900, 700);
-  await openSettings(page, 900);
+  await openSettings(page);
   let state = await dialogState(page);
   log(state.present && state.visible, "[resize] Settings visible at 900px before resize", JSON.stringify(state));
 
@@ -189,18 +184,22 @@ async function checkResizeWhileOpen() {
 /* ====================================================================== */
 async function checkAppearance() {
   const page = await open(1366, 768);
-  await openSettings(page, 1366);
+  await openSettings(page);
 
   const backgroundOptions = await evaluate(page, () => {
     const group = document.querySelector('[role="dialog"][aria-label="Settings"] [aria-label="Background"][role="radiogroup"]');
     return group ? [...group.querySelectorAll('[role="radio"]')].map((b) => b.textContent?.trim()) : [];
   });
-  log(backgroundOptions.length === 3, "exactly three background choices are offered", JSON.stringify(backgroundOptions));
+  log(backgroundOptions.length === 2, "exactly two background choices are offered", JSON.stringify(backgroundOptions));
   log(
     backgroundOptions.some((t) => t?.includes("Pearl")) &&
-      backgroundOptions.some((t) => t?.includes("Obsidian")) &&
-      backgroundOptions.some((t) => t?.includes("Champagne Luxury")),
-    "the three are exactly Pearl, Obsidian, and Champagne Luxury",
+      backgroundOptions.some((t) => t?.includes("Aurora Colors")),
+    "the two are exactly Pearl and Aurora Colors",
+    JSON.stringify(backgroundOptions),
+  );
+  log(
+    !/Obsidian|Champagne/i.test(JSON.stringify(backgroundOptions)),
+    "the removed dark-mode and luxury wallpapers are gone from the picker",
     JSON.stringify(backgroundOptions),
   );
 
@@ -209,21 +208,32 @@ async function checkAppearance() {
     return group ? [...group.querySelectorAll('[role="radio"]')].map((b) => b.textContent?.trim()) : [];
   });
   log(
-    glassOptions.some((t) => t?.includes("Glowy Glass")) && glassOptions.some((t) => t?.includes("Clear Glass")),
-    "both glass modes (Glowy Glass, Clear Glass) are still offered",
+    glassOptions.length === 1 && glassOptions[0]?.includes("Clear Glass"),
+    "Clear Glass is the only glass style offered",
     JSON.stringify(glassOptions),
   );
+  log(!/Glow/i.test(JSON.stringify(glassOptions)), "Glowy Glass is gone from the picker", JSON.stringify(glassOptions));
 
-  // Selecting Champagne Luxury actually changes the live preset.
+  // Selecting Aurora Colors actually changes the live preset -- and the ink
+  // tone with it, since it is the dark-tone wallpaper.
   await evaluate(page, () => {
     const group = document.querySelector('[role="dialog"][aria-label="Settings"] [aria-label="Background"][role="radiogroup"]');
-    const btn = [...group.querySelectorAll('[role="radio"]')].find((b) => b.textContent?.includes("Champagne Luxury"));
+    const btn = [...group.querySelectorAll('[role="radio"]')].find((b) => b.textContent?.includes("Aurora Colors"));
     btn?.click();
     return true;
   });
   await sleep(200);
-  const preset = await evaluate(page, () => document.querySelector(".workspace-root")?.getAttribute("data-preset"));
-  log(preset === "champagne-luxury", "selecting Champagne Luxury updates the live workspace preset", String(preset));
+  const applied = await evaluate(page, () => ({
+    preset: document.querySelector(".workspace-root")?.getAttribute("data-preset"),
+    tone: document.querySelector(".workspace-root")?.getAttribute("data-tone"),
+    orbs: document.querySelectorAll(".aurora-orb").length,
+  }));
+  log(applied.preset === "aurora", "selecting Aurora Colors updates the live workspace preset", JSON.stringify(applied));
+  log(
+    applied.tone === "dark" && applied.orbs === 3,
+    "Aurora Colors applies its dark ink tone and its three drifting orbs",
+    JSON.stringify(applied),
+  );
 
   // Text size: switching to Large actually changes the rendered scale.
   const scaleBefore = await evaluate(page, () => getComputedStyle(document.querySelector(".workspace-root")).getPropertyValue("--text-scale").trim());
@@ -246,31 +256,40 @@ async function checkAppearance() {
   // the previous document had, including the injected fetch override.
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source: MOCK });
   await page.send("Page.navigate", { url: BASE_URL });
-  await sleep(1600);
+  await waitForInteractive(page, evaluate);
   await assertMocked(page, evaluate);
   const persisted = await evaluate(page, () => ({
     preset: document.querySelector(".workspace-root")?.getAttribute("data-preset"),
     textSize: document.querySelector(".workspace-root")?.getAttribute("data-text-size"),
   }));
-  log(persisted.preset === "champagne-luxury" && persisted.textSize === "large", "appearance choices persist across a reload", JSON.stringify(persisted));
+  log(persisted.preset === "aurora" && persisted.textSize === "large", "appearance choices persist across a reload", JSON.stringify(persisted));
   await page.close();
 }
 
 async function checkBackgroundMigration() {
-  // A saved id from before the reduction to three must migrate, never load blank/invalid.
-  const page = await open(1366, 768, {
-    "model-switcher:settings": JSON.stringify({ version: 1, settings: { background: "warm", glass: "classic" } }),
-  });
-  const preset = await evaluate(page, () => document.querySelector(".workspace-root")?.getAttribute("data-preset"));
-  log(preset === "pearl", "a saved 'warm' (removed) id migrates to the new default (pearl), never blank/invalid", String(preset));
-  await page.close();
-
-  const page2 = await open(1366, 768, {
-    "model-switcher:settings": JSON.stringify({ version: 1, settings: { background: "marble", glass: "classic" } }),
-  });
-  const preset2 = await evaluate(page2, () => document.querySelector(".workspace-root")?.getAttribute("data-preset"));
-  log(preset2 === "pearl", "a saved 'marble' id migrates specifically to 'pearl' (the same approved treatment, renamed)", String(preset2));
-  await page2.close();
+  // Every id this app has ever saved must resolve to a real current one --
+  // never blank, never invalid. Each removed wallpaper maps to the nearest
+  // surviving treatment rather than all collapsing onto the default, and a
+  // saved `classic` glass (the removed Glowy Glass, and this app's former
+  // default) resolves to the one remaining material.
+  const cases = [
+    ["warm", "pearl", "a long-removed id falls back to the default"],
+    ["marble", "pearl", "migrates specifically to pearl (the same treatment, renamed)"],
+    ["champagne-luxury", "pearl", "the removed luxury wallpaper migrates to the remaining light one"],
+    ["obsidian", "aurora", "the removed dark-mode wallpaper migrates to the remaining dark one"],
+  ];
+  for (const [saved, expectedPreset, why] of cases) {
+    const page = await open(1366, 768, {
+      "model-switcher:settings": JSON.stringify({ version: 1, settings: { background: saved, glass: "classic" } }),
+    });
+    const state = await evaluate(page, () => ({
+      preset: document.querySelector(".workspace-root")?.getAttribute("data-preset"),
+      glass: document.querySelector(".workspace-root")?.getAttribute("data-glass"),
+    }));
+    log(state.preset === expectedPreset, `a saved "${saved}" background: ${why}`, JSON.stringify(state));
+    log(state.glass === "ultra", `a saved "classic" glass alongside "${saved}" migrates to Clear Glass`, String(state.glass));
+    await page.close();
+  }
 }
 
 /* ====================================================================== */
@@ -278,7 +297,7 @@ async function checkBackgroundMigration() {
 /* ====================================================================== */
 async function checkPersonalizations() {
   const page = await open(1366, 768);
-  await openSettings(page, 1366);
+  await openSettings(page);
   await evaluate(page, () => {
     const tab = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent?.trim() === "Personalizations");
     tab?.click();
@@ -341,7 +360,7 @@ async function checkPersonalizations() {
   await page.send("Page.navigate", { url: BASE_URL });
   await sleep(1600);
   await assertMocked(page, evaluate);
-  await openSettings(page, 1366);
+  await openSettings(page);
   await evaluate(page, () => {
     const tab = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent?.trim() === "Personalizations");
     tab?.click();
@@ -369,7 +388,7 @@ async function checkPersonalizations() {
 /* ====================================================================== */
 async function checkReadAloud() {
   const page = await open(1366, 768);
-  await openSettings(page, 1366);
+  await openSettings(page);
   await evaluate(page, () => {
     const tab = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent?.trim() === "Read aloud");
     tab?.click();
@@ -630,7 +649,7 @@ const EXPORT_SEED = (() => {
 
 async function openExportSeed() {
   const page = await open(1366, 768, { "model-switcher:conversations": JSON.stringify(EXPORT_SEED) });
-  await openSettings(page, 1366);
+  await openSettings(page);
   await evaluate(page, () => {
     const tab = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent?.trim() === "Conversations");
     tab?.click();
@@ -745,7 +764,7 @@ async function checkDeleteAll() {
   });
   await sleep(700);
 
-  await openSettings(page, 1366);
+  await openSettings(page);
   await evaluate(page, () => {
     const tab = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent?.trim() === "Conversations");
     tab?.click();
@@ -775,7 +794,7 @@ async function checkDeleteAll() {
   log(stillThere, "Delete all: Cancel preserves the conversation (nothing deleted)", String(stillThere));
 
   // Confirm path: data actually clears, back to welcome state.
-  await openSettings(page, 1366);
+  await openSettings(page);
   await evaluate(page, () => {
     const tab = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent?.trim() === "Conversations");
     tab?.click();

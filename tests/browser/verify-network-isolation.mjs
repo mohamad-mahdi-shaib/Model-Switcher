@@ -31,7 +31,14 @@ const page = await launch({ width: 1366, height: 768 });
 // No MOCK script installed here, deliberately -- window.fetch is the real,
 // native fetch for the whole life of this page.
 await page.send("Page.navigate", { url: BASE_URL });
-await sleep(1600); // the app's own GET /api/chat availability probe fires on mount
+// The app's own GET /api/chat availability probe fires on mount -- which, on
+// a dev server that may still be compiling, is not a fixed number of
+// milliseconds after `Page.navigate`. Poll for the interception instead of
+// guessing a delay: with no mock installed there is nothing else that can
+// satisfy this, so a real timeout here still fails the check honestly.
+for (let waited = 0; page.getApiChatInterceptCount() === 0 && waited < 40000; waited += 200) {
+  await sleep(200);
+}
 
 const afterLoad = page.getApiChatInterceptCount();
 log(

@@ -16,7 +16,7 @@
 // deliberately NOT picked up by `npm test` (see tests/*.test.ts glob in
 // package.json), and is run on demand instead.
 
-import { launch, evaluate, sleep, screenshot, pressKey, clickAt } from "./cdp.mjs";
+import { launch, evaluate, sleep, screenshot, pressKey, clickAt, waitForInteractive } from "./cdp.mjs";
 import { MOCK, SEND, TYPE, CLICK_SEND, STAGE_FILE, PNG_BYTES, assertMocked } from "./mock.mjs";
 
 const args = Object.fromEntries(
@@ -61,7 +61,7 @@ async function open(availability, seed) {
   }
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source });
   await page.send("Page.navigate", { url: BASE_URL });
-  await sleep(1600);
+  await waitForInteractive(page, evaluate);
   await assertMocked(page, evaluate);
   return page;
 }
@@ -130,7 +130,7 @@ function seededState(messages) {
 const composerState = () =>
   evaluate(page_, () => {
     const ta = document.querySelector("textarea");
-    const notice = document.querySelector('footer [role="alert"]');
+    const notice = document.querySelector(".glass-input-capsule ~ [role=\"alert\"], main > div:last-child [role=\"alert\"]");
     const sendBtn = document.querySelector('[aria-label="Send message"]');
     return {
       value: ta ? ta.value : null,
@@ -141,7 +141,7 @@ const composerState = () =>
 
 const bannerText = () =>
   evaluate(page_, () => {
-    const alert = document.querySelector('[role="alert"]:not(footer [role="alert"])');
+    const alert = [...document.querySelectorAll('[role="alert"]')].find((el) => !el.closest("main > div:last-child"));
     return alert ? alert.textContent.trim() : null;
   });
 
@@ -217,7 +217,7 @@ let page_;
   log(/50-message limit/i.test(s.notice || ""), "F3.5 the actual 50-message cap is named, not generic copy", JSON.stringify(s.notice));
   log(s.sendDisabled === true, "F3.6 sending is disabled once the conversation is full");
   const newConvBtn = await evaluate(page, () =>
-    Boolean([...document.querySelectorAll("footer button")].find((b) => /start new conversation/i.test(b.textContent || ""))),
+    Boolean([...document.querySelectorAll("main > div:last-child button")].find((b) => /start new conversation/i.test(b.textContent || ""))),
   );
   log(newConvBtn, "F3.7 a working 'Start new conversation' control is offered");
   await screenshot(page, `${OUT}/f3-conversation-full.png`);
@@ -254,7 +254,7 @@ let page_;
   );
   log(s.sendDisabled === true, "U1.2 sending is disabled while history carries the oversized message");
   const newConvBtn = await evaluate(page, () =>
-    Boolean([...document.querySelectorAll("footer button")].find((b) => /start new conversation/i.test(b.textContent || ""))),
+    Boolean([...document.querySelectorAll("main > div:last-child button")].find((b) => /start new conversation/i.test(b.textContent || ""))),
   );
   log(newConvBtn, "U1.3 a working 'Start new conversation' control is offered here too");
 
@@ -308,7 +308,7 @@ let page_;
 
   const afterFailure = await evaluate(page, () => {
     const userTexts = [...document.querySelectorAll(".flex.justify-end.pt-3 p.text-right")].map((p) => p.textContent?.trim());
-    return { userTexts, banner: document.querySelector('[role="alert"]:not(footer [role="alert"])')?.textContent?.trim() ?? null };
+    return { userTexts, banner: [...document.querySelectorAll('[role="alert"]')].find((el) => !el.closest("main > div:last-child"))?.textContent?.trim() ?? null };
   });
   log(
     afterFailure.userTexts.includes("first question") && afterFailure.userTexts.includes("second question"),
@@ -753,22 +753,45 @@ let page_;
   draft = await evaluate(page, () => document.querySelector("textarea")?.value);
   log(draft === "draft surviving a cancel", "P3 an unsent draft survives CANCELLING a mid-conversation provider switch", JSON.stringify(draft));
 
-  // P4-P6: the header keeps only the title -- provider selection and
-  // Settings genuinely left it, not merely gained a second entry point.
+  // P4-P7, restated for the layout-restructure pass. The placement pass had
+  // emptied the header down to the conversation title, because at that point
+  // the header lived INSIDE the chat panel and nothing global could sit in
+  // it. It is now a real global header above all three regions, and it
+  // deliberately carries the workspace-level controls: the sidebar toggle,
+  // the brand, the title, and the single Settings trigger (which no longer
+  // has a second copy in the sidebar footer or the drawer -- that is the
+  // part P5 was always protecting). Provider selection stays in the
+  // composer, where the placement pass put it.
   const headerContents = await evaluate(page, () => {
     const header = document.querySelector("header");
     return {
       hasProviderTrigger: Boolean(header?.querySelector('[aria-haspopup="listbox"]')),
-      hasSettingsTrigger: Boolean(header?.querySelector('[aria-haspopup="dialog"]')),
-      hasTitle: Boolean(header?.textContent?.trim()),
+      settingsTriggersInHeader: header ? header.querySelectorAll('[aria-label="Settings"]').length : 0,
+      settingsTriggersAnywhereElse: [...document.querySelectorAll('[aria-label="Settings"]')].filter(
+        (b) => !b.closest("header") && b.offsetParent !== null,
+      ).length,
+      hasTitle: Boolean(header?.querySelector("h1")?.textContent?.trim()),
+      hasSidebarToggle: Boolean(
+        header?.querySelector('[aria-label="Open conversation list"], [aria-label="Close conversation list"]'),
+      ),
     };
   });
-  log(!headerContents.hasProviderTrigger, "P4 the header no longer contains the provider dropdown trigger");
-  log(!headerContents.hasSettingsTrigger, "P5 the header no longer contains a Settings/Appearance trigger");
+  log(!headerContents.hasProviderTrigger, "P4 the header still does not contain the provider dropdown trigger");
+  log(
+    headerContents.settingsTriggersInHeader === 1 && headerContents.settingsTriggersAnywhereElse === 0,
+    "P5 Settings has exactly ONE trigger, in the global header",
+    JSON.stringify(headerContents),
+  );
   log(headerContents.hasTitle, "P6 the header still shows the conversation title");
+  log(headerContents.hasSidebarToggle, "P6b the header carries the sidebar toggle");
 
-  const footerHasProvider = await evaluate(page, () => Boolean(document.querySelector('footer [aria-haspopup="listbox"]')));
-  log(footerHasProvider, "P7 the provider trigger now lives in the composer's own footer toolbar");
+  // The composer is no longer a `<footer>` element (the layout pass gave the
+  // workspace a real one of its own, then removed it again; either way the
+  // chat input is its own region, not a footer). Scope to the main region.
+  const composerHasProvider = await evaluate(page, () =>
+    Boolean(document.querySelector('main [aria-haspopup="listbox"]')),
+  );
+  log(composerHasProvider, "P7 the provider trigger lives in the composer's own toolbar inside main");
 
   log(page.getApiChatInterceptCount() === 0, "U3 zero real network requests to /api/chat on this page");
   await page.close();
@@ -899,7 +922,7 @@ let page_;
   });
   log(Boolean(content) && content.includes("Hello there!"), "I6 a failed Regenerate preserves the original answer", String(content));
 
-  const errorShown = await evaluate(page, () => Boolean(document.querySelector('[role="alert"]:not(footer [role="alert"])')));
+  const errorShown = await evaluate(page, () => Boolean([...document.querySelectorAll('[role="alert"]')].find((el) => !el.closest("main > div:last-child"))));
   log(errorShown, "I7 a failed Regenerate shows the error banner");
 
   const versionSelectorAfterFail = await evaluate(page, () => Boolean(document.querySelector('[aria-label="Answer version"]')));
@@ -1022,7 +1045,15 @@ let page_;
     dt.items.add(file);
     input.files = dt.files;
     input.dispatchEvent(new Event("change", { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 1500));
+    // Poll for staging to finish rather than assuming a fixed 1.5s: the
+    // work here is a real decode + canvas re-encode of a 7MB photo, whose
+    // wall-clock cost depends entirely on the machine, and a too-short wait
+    // reports "Send is still disabled" for a feature that is working.
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline && document.querySelector('[aria-label="Preparing"]')) {
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    await new Promise((r) => setTimeout(r, 150));
     const sendBtn = document.querySelector('[aria-label="Send message"]');
     return { originalSize: blob.size, sendDisabled: sendBtn ? sendBtn.disabled : null };
   });
@@ -1152,7 +1183,16 @@ let page_;
     JSON.stringify(clickedDuringStaging),
   );
 
-  await sleep(2000);
+  // Same reasoning as I12's own wait: poll for the spinner to clear instead
+  // of assuming how long a real re-encode takes on this machine.
+  await evaluate(page, async () => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline && document.querySelector('[aria-label="Preparing"]')) {
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    return true;
+  });
+  await sleep(200);
   const settled = await evaluate(page, () => ({
     spinnerGone: !document.querySelector('[aria-label="Preparing"]'),
     sendDisabled: document.querySelector('[aria-label="Send message"]')?.disabled ?? null,

@@ -791,6 +791,9 @@ export function MessageList({
   speechVoiceGender,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The centred transcript column inside `scrollRef` -- what actually grows
+  // as an answer reveals. See the ResizeObserver effect below.
+  const contentRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
   const streaming = status === "streaming";
@@ -858,6 +861,34 @@ export function MessageList({
     endRef.current?.scrollIntoView({ block: "end" });
   }, [messages, status, atBottom]);
 
+  /**
+   * The same follow, driven by the transcript's own height instead of by
+   * state changes.
+   *
+   * `messages` and `status` both settle BEFORE the answer has finished
+   * laying itself out: the reveal animation (`use-reveal`) keeps adding
+   * rendered runs for a while afterwards, and a Markdown list, table or
+   * fenced block can reflow again after that. The effect above has already
+   * run by then, so the last stretch of a long answer landed below the fold
+   * -- and because `atBottom` is only recomputed from a real scroll event,
+   * the view still believed it was at the bottom and did not offer "Jump to
+   * latest" either. Measured at 85px of hidden tail on a streamed reply.
+   *
+   * Observing the content element closes that gap at its source: any growth
+   * at all, from any cause, re-pins the view to the end -- but still only
+   * while the reader is already there.
+   */
+  useEffect(() => {
+    if (!atBottom) return;
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      endRef.current?.scrollIntoView({ block: "end" });
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [atBottom]);
+
   const jumpToLatest = () => {
     setAtBottom(true);
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -867,19 +898,23 @@ export function MessageList({
   const isEmpty = messages.length === 0 && !error;
 
   return (
-    <div className="relative z-10 my-4 min-h-0 flex-1">
-      <div
-        aria-hidden="true"
-        className="diffusion-scrim absolute -inset-x-2 -inset-y-1 rounded-[22px]"
-      />
+    <div className="relative z-10 my-3 min-h-0 flex-1">
+      {/* The scroll viewport spans the whole panel -- so the scrollbar sits
+          at the panel's edge where it belongs -- while the transcript
+          itself is a centred column of `--content-column`. Below that width
+          the column simply fills the viewport, so nothing changes on a
+          phone or a laptop; it only stops lines from running the full width
+          of a large display. The composer reads the same variable, so the
+          two stay aligned as one column. */}
       <div
         aria-busy={streaming}
         aria-label="Conversation"
-        className="glass-scroll relative h-full space-y-6 overflow-y-auto pr-2"
+        className="glass-scroll relative h-full overflow-y-auto pr-2"
         onScroll={onScroll}
         ref={scrollRef}
         role="log"
       >
+        <div className="mx-auto w-full max-w-[var(--content-column)] space-y-6" ref={contentRef}>
         {needsSetup ? <SetupState provider={provider} /> : null}
         {isEmpty ? <WelcomeState onUsePrompt={onUsePrompt} /> : null}
 
@@ -968,6 +1003,7 @@ export function MessageList({
         ) : null}
 
         <div ref={endRef} />
+        </div>
       </div>
 
       {!atBottom && messages.length > 0 ? (

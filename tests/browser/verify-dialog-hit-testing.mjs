@@ -1,6 +1,6 @@
 // Dedicated regression for Finding U5, second pass (independent follow-up
 // review, "One focused check" section): the switch-confirmation dialog's
-// buttons must receive real pointer input, in BOTH approved glass modes, not
+// buttons must receive real pointer input in the approved glass mode, not
 // just visually sit above the backdrop. A synthetic DOM `.click()` cannot
 // prove this -- it fires the target's own handler directly and never asks
 // the browser which element is actually frontmost at a point. Every click
@@ -9,12 +9,12 @@
 // hit-testing pipeline a real mouse would.
 //
 // Kept as its own file (mirroring verify-network-isolation.mjs) rather than
-// folded into verify.mjs's existing F8 block: verify.mjs never varies glass
-// mode internally, and retrofitting that in place would have meant
-// restructuring its whole F8 block. This file covers exactly the one
-// dimension that needed adding -- glass mode -- using the same dialog
-// interaction already covered (once, in "classic") by verify.mjs's own
-// U5b.1-U5b.5 checks.
+// folded into verify.mjs's existing F8 block. It was written when this app
+// shipped two glass materials, to prove the dialog hit-tested correctly in
+// each; the UI-update pass removed Glowy Glass, so it now runs once, for
+// the one remaining material (Clear Glass). The checks themselves are
+// unchanged and still worth their own file -- they are the only ones that
+// drive the dialog with real pointer input rather than synthetic clicks.
 //
 // Usage:
 //   node tests/browser/verify-dialog-hit-testing.mjs
@@ -22,7 +22,7 @@
 // Not picked up by `npm test` (see tests/*.test.ts glob in package.json);
 // run on demand, same as verify.mjs and verify-network-isolation.mjs.
 
-import { launch, evaluate, sleep, clickAt } from "./cdp.mjs";
+import { launch, evaluate, sleep, clickAt, waitForInteractive } from "./cdp.mjs";
 import { MOCK, SEND, assertMocked } from "./mock.mjs";
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -95,34 +95,15 @@ async function checkGlassMode(glassMode) {
   const page = await launch({ width: 1366, height: 768 });
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source: MOCK });
   await page.send("Page.navigate", { url: BASE_URL });
-  await sleep(1200);
+  await waitForInteractive(page, evaluate);
   await assertMocked(page, evaluate);
 
-  if (glassMode === "ultra") {
-    // Responsive UI refinement (placement pass): Appearance now lives behind
-    // the sidebar's Settings entry point (BackgroundPicker.tsx was deleted;
-    // see SettingsPanel.tsx). At this desktop width, the only visible
-    // Settings trigger is the full sidebar's own footer button.
-    await evaluate(page, () => {
-      const trigger = [...document.querySelectorAll('[aria-haspopup="dialog"]')].find((b) => b.offsetWidth > 0);
-      trigger.click();
-      return true;
-    });
-    await sleep(150);
-    await evaluate(page, () => {
-      const btn = [...document.querySelectorAll('[role="radio"]')].find((b) => /Clear Glass/.test(b.textContent || ""));
-      btn.click();
-      return true;
-    });
-    await sleep(150);
-    await evaluate(page, () => {
-      const closeBtn = document.querySelector('[aria-label="Close settings"]');
-      if (closeBtn) closeBtn.click();
-      return true;
-    });
-    await sleep(150);
-  }
-
+  // UI-update pass: there is one glass material now (Clear Glass, internal
+  // id `ultra`), so nothing has to be selected first -- it is the default
+  // and the only option. This file used to run twice, once per material,
+  // selecting Clear Glass through the Appearance picker on the second pass;
+  // that loop is gone with the material it covered. The hit-testing
+  // coverage below is unchanged.
   const confirmedGlass = await evaluate(page, () => document.querySelector(".workspace-root")?.getAttribute("data-glass"));
   log(confirmedGlass === glassMode, `[${glassMode}] the requested glass mode is actually active`, `data-glass=${confirmedGlass}`);
 
@@ -215,7 +196,6 @@ async function checkGlassMode(glassMode) {
   await page.close();
 }
 
-await checkGlassMode("classic");
 await checkGlassMode("ultra");
 
 console.log(`\n${pass} passed, ${fail} failed`);

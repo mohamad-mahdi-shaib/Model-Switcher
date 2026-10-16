@@ -15,7 +15,12 @@
  * session, and a later save still succeeds.
  */
 
-import { migrateBackgroundId, type BackgroundId, type GlassStyleId } from "@/lib/backgrounds";
+import {
+  migrateBackgroundId,
+  migrateGlassId,
+  type BackgroundId,
+  type GlassStyleId,
+} from "@/lib/backgrounds";
 import { EMPTY_PREFERENCES, type Preferences } from "@/lib/preferences";
 import { AUTO_VOICE, clampSpeechRate, DEFAULT_SPEECH_RATE, type VoiceGenderPreference } from "@/lib/use-speech";
 import { DEFAULT_TEXT_SIZE, isTextSizeId, type TextSizeId } from "@/lib/text-size";
@@ -63,8 +68,8 @@ function readString(v: unknown, fallback: string): string {
 }
 
 /**
- * Reads back whatever was saved, migrating a removed background id and
- * falling back field-by-field (never wholesale) on anything malformed --
+ * Reads back whatever was saved, migrating a removed background or glass id
+ * and falling back field-by-field (never wholesale) on anything malformed --
  * one bad field must not discard an otherwise-valid save.
  */
 export function loadAppSettings(defaultBackground: BackgroundId, defaultGlass: GlassStyleId): AppSettings {
@@ -91,7 +96,11 @@ export function loadAppSettings(defaultBackground: BackgroundId, defaultGlass: G
   if (obj.version !== VERSION || !obj.settings || typeof obj.settings !== "object") return fallback;
   const s = obj.settings as Record<string, unknown>;
 
-  const glass: GlassStyleId = s.glass === "classic" || s.glass === "ultra" ? s.glass : defaultGlass;
+  // A saved `"classic"` (the removed Glowy Glass, and this app's former
+  // default) resolves to the one remaining style rather than reading as
+  // corrupt -- `migrateGlassId` owns that mapping, next to the style list
+  // itself, exactly like `migrateBackgroundId` owns the preset one.
+  const glass: GlassStyleId = migrateGlassId(typeof s.glass === "string" ? s.glass : undefined);
   const textSize = isTextSizeId(s.textSize) ? s.textSize : DEFAULT_TEXT_SIZE;
 
   const rawPrefs = s.preferences && typeof s.preferences === "object" ? (s.preferences as Record<string, unknown>) : {};

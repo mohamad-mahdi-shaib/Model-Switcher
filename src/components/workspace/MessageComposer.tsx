@@ -254,7 +254,20 @@ export function MessageComposer({
   const blocked = conversationFull || hasOversizedHistoryMessage;
 
   return (
-    <footer className="relative z-10 shrink-0 pt-1">
+    // Composer-region pass: a plain element, not `<footer>`. The workspace
+    // now has a real global footer (`AppFooter.tsx`) and the chat input is
+    // deliberately NOT part of it -- the two carry different things (one
+    // sends a message, the other reports status), and merging them would
+    // make both harder to read. The composer stays where it already was:
+    // pinned to the bottom of the main region as a `shrink-0` flex item
+    // below the transcript's own `flex-1` scroll area, so the history
+    // scrolls independently above it, the input never moves, and neither
+    // one can overlap the other or the global footer below.
+    //
+    // `mx-auto` + `--content-column`: the same centred column the transcript
+    // uses, so the input lines up with the conversation it belongs to
+    // rather than stretching the full width of a now-full-width panel.
+    <div className="relative z-10 mx-auto w-full max-w-[var(--content-column)] shrink-0 pt-1">
       <div
         className={`glass-input-capsule flex flex-col gap-1 rounded-[26px] px-4 py-2.5 transition-colors ${
           dragActive ? "outline outline-2 outline-white/70" : ""
@@ -408,6 +421,6 @@ export function MessageComposer({
           Enter to send · Shift+Enter for a new line
         </p>
       )}
-    </footer>
+    </div>
   );
 }

@@ -282,3 +282,42 @@ export async function clickAt(page, x, y) {
     clickCount: 1,
   });
 }
+
+/**
+ * Wait for the app to be INTERACTIVE, not just for a fixed delay.
+ *
+ * Everything this app restores -- saved conversations, saved appearance
+ * settings -- is read in a post-mount effect, and the composer stays
+ * disabled until that read has happened and the availability probe has
+ * answered. A fixed `sleep()` after `Page.navigate` therefore raced the
+ * dev server's own compile step: on a cold or busy run the probe fired
+ * against the server-rendered defaults, so a typed draft could be
+ * overwritten by hydration and a click could land before the control it
+ * targeted existed. Polling the one signal that means "React is driving
+ * this page now" removes the race instead of widening it.
+ */
+export async function waitForInteractive(page, evaluate, timeoutMs = 40000) {
+  const started = Date.now();
+  for (;;) {
+    const ready = await evaluate(page, () => {
+      const ta = document.querySelector("textarea[aria-label='Message']");
+      if (!ta) return false;
+      // The composer is enabled once hydration AND the availability probe
+      // have both landed.
+      if (ta.disabled === false) return true;
+      // A disabled composer is also the CORRECT post-hydration state when
+      // the active provider has no key configured -- in which case the app
+      // has rendered its own setup screen, which it can only do after the
+      // probe answered. Treat that as ready too, or a deliberately
+      // unconfigured scenario would wait forever for something that is
+      // never going to happen.
+      const main = document.querySelector("main")?.textContent || "";
+      return /is not configured|to start chatting/i.test(main);
+    });
+    if (ready) return;
+    if (Date.now() - started > timeoutMs) {
+      throw new Error("timed out waiting for the app to become interactive");
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}

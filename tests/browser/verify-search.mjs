@@ -15,7 +15,7 @@
 // Not part of `npm test`; run on demand like this project's other
 // real-browser checks.
 
-import { launch, evaluate, sleep, screenshot } from "./cdp.mjs";
+import { launch, evaluate, sleep, screenshot, waitForInteractive } from "./cdp.mjs";
 import { MOCK, assertMocked } from "./mock.mjs";
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
@@ -75,7 +75,7 @@ async function open() {
   const source = MOCK + `window.localStorage.setItem("model-switcher:conversations", ${JSON.stringify(JSON.stringify(SEED))});`;
   await page.send("Page.addScriptToEvaluateOnNewDocument", { source });
   await page.send("Page.navigate", { url: BASE_URL });
-  await sleep(1200);
+  await waitForInteractive(page, evaluate);
   await assertMocked(page, evaluate);
   return page;
 }

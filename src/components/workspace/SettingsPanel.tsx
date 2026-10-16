@@ -63,9 +63,19 @@ import {
 
 const FOCUSABLE_SELECTOR = "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
 
-type Section = "appearance" | "personalizations" | "readAloud" | "conversations";
+/**
+ * The panel's own tab strip, and the single definition of what a Settings
+ * section IS -- exported because the selected section is owned by
+ * `WorkspaceLayout` (this component is rendered on every render and returns
+ * null when closed, so state kept inside it would persist across opens by
+ * accident rather than by decision).
+ *
+ * Appearance lives here and only here: wallpaper, glass style and text size
+ * have no entry point anywhere in the main chat interface.
+ */
+export type SettingsSection = "appearance" | "personalizations" | "readAloud" | "conversations";
 
-const SECTIONS: { id: Section; label: string }[] = [
+export const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "personalizations", label: "Personalizations" },
   { id: "readAloud", label: "Read aloud" },
@@ -149,7 +159,17 @@ function AppearanceSection({
 
       <section aria-label="Glass appearance" className="flex flex-col gap-2 border-t border-white/30 pt-3">
         <SectionHeading>Glass appearance</SectionHeading>
-        <div aria-label="Glass appearance" className="grid grid-cols-2 gap-1.5" role="radiogroup">
+        {/* UI-update pass: Glowy Glass was removed, so this is a
+            single-option group -- laid out full width rather than as one
+            half-width card beside an empty column. The group itself is kept
+            (not replaced with static text) so the selected material stays
+            visible and persisted, and so restoring a second material is a
+            data change in `@/lib/backgrounds`, not a UI rewrite. */}
+        <div
+          aria-label="Glass appearance"
+          className={`grid gap-1.5 ${GLASS_STYLES.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}
+          role="radiogroup"
+        >
           {GLASS_STYLES.map((style) => {
             const isActive = style.id === glass;
             return (
@@ -591,6 +611,15 @@ export type SettingsOverlayProps = {
   onChangeSpeechRate: (rate: number) => void;
   onChangeSpeechVoiceGender: (pref: VoiceGenderPreference) => void;
 
+  /**
+   * Lifted out of this component (layout-restructure pass): the footer's
+   * section links open Settings ON a named section, so the selection has to
+   * be owned by whoever owns `open` -- internal state here could only ever
+   * be changed from inside the panel, after it was already open.
+   */
+  section: SettingsSection;
+  onSectionChange: (section: SettingsSection) => void;
+
   /** Title only -- just enough to let the user pick which to export. */
   exportableConversations: readonly { id: string; title: string }[];
   onExportConversations: (conversationIds: string[]) => void;
@@ -617,11 +646,12 @@ export function SettingsOverlay({
   onChangeSpeechVoice,
   onChangeSpeechRate,
   onChangeSpeechVoiceGender,
+  section,
+  onSectionChange,
   exportableConversations,
   onExportConversations,
   onDeleteAllConversations,
 }: SettingsOverlayProps) {
-  const [section, setSection] = useState<Section>("appearance");
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
 
@@ -699,14 +729,14 @@ export function SettingsOverlay({
         </div>
 
         <div aria-label="Settings sections" className="flex shrink-0 gap-1 overflow-x-auto pb-1" role="tablist">
-          {SECTIONS.map((s) => (
+          {SETTINGS_SECTIONS.map((s) => (
             <button
               aria-selected={section === s.id}
               className={`focus-glass min-h-11 shrink-0 rounded-lg px-2.5 text-[11px] font-medium whitespace-nowrap ${
                 section === s.id ? "bg-white/20 glass-text-dark" : "glass-text-subtle hover:bg-white/10"
               }`}
               key={s.id}
-              onClick={() => setSection(s.id)}
+              onClick={() => onSectionChange(s.id)}
               role="tab"
               type="button"
             >

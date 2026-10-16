@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChatHeader } from "@/components/workspace/ChatHeader";
+import { AppHeader } from "@/components/workspace/AppHeader";
+import { AppShell } from "@/components/workspace/AppShell";
 import { ConversationSidebar } from "@/components/workspace/ConversationSidebar";
 import {
   MessageComposer,
   type ComposerHandle,
 } from "@/components/workspace/MessageComposer";
 import { MessageList } from "@/components/workspace/MessageList";
-import { SettingsOverlay } from "@/components/workspace/SettingsPanel";
+import { SettingsOverlay, type SettingsSection } from "@/components/workspace/SettingsPanel";
 import {
   AMBIENT_ORBS,
   backgroundTone,
@@ -27,7 +28,6 @@ import {
   type AvailabilityMap,
 } from "@/lib/providers";
 import type { TextSizeId } from "@/lib/text-size";
-import { useEdgeGlint } from "@/lib/use-edge-glint";
 import { useConversations } from "@/lib/use-conversations";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useVoiceOptions } from "@/lib/use-speech";
@@ -42,15 +42,21 @@ import { useVoiceOptions } from "@/lib/use-speech";
  * switching this single slot from "sidebar" to "settings" can never leave
  * both mounted at once.
  *
- * Settings itself is now rendered ONCE, here, as `SettingsOverlay` --
- * decoupled from the sidebar/drawer's own mount lifecycle (see
- * `SettingsPanel.tsx`'s own comment for the real bug this fixes: the
- * previous two Settings surfaces were nested inside the sidebar's own
- * `SidebarBody`, so closing the drawer to open Settings could leave
- * NEITHER visible).
+ * Settings itself is rendered ONCE, here, as `SettingsOverlay` -- decoupled
+ * from the sidebar/drawer's own mount lifecycle (see `SettingsPanel.tsx`'s
+ * own comment for the real bug this fixes: the previous two Settings
+ * surfaces were nested inside the sidebar's own `SidebarBody`, so closing
+ * the drawer to open Settings could leave NEITHER visible). Its TRIGGER now
+ * lives in the global header (`AppHeader.tsx`) rather than the sidebar
+ * footer, so it is reachable at every width and in every sidebar state.
  */
 type ActiveOverlay = "provider" | "settings" | "sidebar" | null;
 
+/**
+ * State container and composition root. The layout itself -- header,
+ * sidebar, main, footer -- is `AppShell`; this component owns the state all
+ * four regions read, and nothing about how they are arranged.
+ */
 export function WorkspaceLayout() {
   const [background, setBackground] = useState<BackgroundId>(DEFAULT_BACKGROUND);
   const [glass, setGlass] = useState<GlassStyleId>(DEFAULT_GLASS);
@@ -67,6 +73,11 @@ export function WorkspaceLayout() {
   );
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
+  // Which Settings tab is showing. Owned here rather than inside
+  // `SettingsOverlay` so the panel stays presentational -- it is rendered
+  // (and returns null) on every render, so state kept inside it would
+  // persist across opens by accident rather than by decision.
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [availability, setAvailability] = useState<AvailabilityMap | null>(null);
   const composerRef = useRef<ComposerHandle>(null);
   // Interaction refinement: local sidebar search. Lifted here, like every
@@ -79,18 +90,21 @@ export function WorkspaceLayout() {
   // again still re-triggers the effect (a value that does not change would
   // not re-fire a `useEffect` watching it).
   const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
-  // Finding U5 (independent follow-up review): the switch-confirmation
-  // dialog's modal backdrop needs a portal target with no backdrop-filter/
-  // transform ancestor of its own, or `position:fixed` on the backdrop is
-  // contained by whichever glass panel it happens to render inside instead
-  // of covering the real viewport -- see ChatHeader.tsx's SwitchDialog.
-  // `<main>` is the lowest common ancestor of the sidebar and the chat
-  // panel (both of which independently set `backdrop-filter`) and has no
-  // such property itself. State, set via a ref callback, rather than a raw
-  // ref read during render (React's own rule against reading `.current`
-  // outside an effect/handler -- a value genuinely needed for what THIS
-  // component renders belongs in state, not a ref).
-  const [mainEl, setMainEl] = useState<HTMLElement | null>(null);
+  // Finding U5 (independent follow-up review): every portaled overlay --
+  // the sidebar drawer, Settings, and the switch-confirmation dialog --
+  // needs a portal target with no backdrop-filter/transform ancestor of its
+  // own, or `position: fixed` on a backdrop is contained by whichever glass
+  // panel it happens to render inside instead of covering the real
+  // viewport. `AppShell` hands back its own outermost element for exactly
+  // that: it wraps all four regions, carries no filter of its own, and is
+  // `relative` (which the switch dialog's measured placement resolves
+  // against). It replaces the previous `<main>` target, which could not
+  // cover the new header and footer at all -- they are its siblings, not
+  // its descendants. State, set via a ref callback, rather than a raw ref
+  // read during render (React's own rule against reading `.current` outside
+  // an effect/handler -- a value genuinely needed for what THIS component
+  // renders belongs in state, not a ref).
+  const [shellEl, setShellEl] = useState<HTMLElement | null>(null);
   // Interaction refinement: the desktop sidebar's own open/collapsed state,
   // independent of the drawer's `activeOverlay==="sidebar"` (which only
   // ever applies below `isCompactSidebar`). Plain `useState(false)`, not
@@ -136,20 +150,20 @@ export function WorkspaceLayout() {
   // threshold while the drawer happens to still be open (e.g. a phone
   // rotated to a wide split-screen, or a live resize during a test), the
   // full sidebar is now on screen doing the same job, so the drawer stops
-  // counting as open -- avoiding two redundant "Conversations" surfaces (and
-  // their two Settings triggers) ever being visible at once. Derived at
-  // render time rather than synced back into state via an effect, per this
-  // project's own `react-hooks/set-state-in-effect` rule: `activeOverlay`
-  // itself is untouched, so the drawer reopens normally the next time the
-  // viewport narrows again.
+  // counting as open -- avoiding two redundant "Conversations" surfaces
+  // ever being visible at once. Derived at render time rather than synced
+  // back into state via an effect, per this project's own
+  // `react-hooks/set-state-in-effect` rule: `activeOverlay` itself is
+  // untouched, so the drawer reopens normally the next time the viewport
+  // narrows again.
   const isCompactSidebar = useMediaQuery("(max-width: 1023px)");
   const overlay: ActiveOverlay =
     !isCompactSidebar && activeOverlay === "sidebar" ? null : activeOverlay;
 
-  // One toggle button (ChatHeader) serves both roles: below `lg` it opens/
-  // closes the portaled drawer; at `>=lg` it collapses/expands the inline
-  // sidebar. `sidebarVisible` drives the button's own label/aria-expanded
-  // state so it always describes what it currently controls.
+  // One toggle button (the global header) serves both roles: below `lg` it
+  // opens/closes the portaled drawer; at `>=lg` it collapses/expands the
+  // inline sidebar. `sidebarVisible` drives the button's own label/
+  // aria-expanded state so it always describes what it currently controls.
   const sidebarVisible = isCompactSidebar ? overlay === "sidebar" : !desktopSidebarCollapsed;
   const toggleSidebar = () => {
     if (isCompactSidebar) {
@@ -211,9 +225,6 @@ export function WorkspaceLayout() {
    */
   const handleHighlightHandled = useCallback(() => setHighlightMessageId(null), []);
 
-  const isUltra = glass === "ultra";
-  const { hostRef, glintRef } = useEdgeGlint<HTMLElement>(isUltra);
-
   // Ask the server which providers are actually configured. Only booleans and
   // model names come back — never a key.
   useEffect(() => {
@@ -242,7 +253,8 @@ export function WorkspaceLayout() {
   // consumer -- both MessageComposer's disabled/notice state and its own
   // internal validateDraft() call (inside send()) must agree with this exact
   // number.
-  const conversationFull = (active?.messages.length ?? 0) >= MAX_MESSAGES;
+  const messageCount = active?.messages.length ?? 0;
+  const conversationFull = messageCount >= MAX_MESSAGES;
   // U1: same idea, for the other reason a conversation can become permanently
   // unsendable -- a message already in it (never a fresh draft, which
   // validateDraft() itself refuses) is over the per-message limit.
@@ -250,15 +262,16 @@ export function WorkspaceLayout() {
 
   return (
     <div
-      // Responsive UI refinement: tighter edge margin below `sm` so the
-      // approved panel keeps as much of a 360px-wide viewport as possible
-      // rather than losing a fixed 32px to padding regardless of screen
-      // size; `lg:p-6` upward is exactly the desktop value this already had.
-      // The four `env(safe-area-inset-*)` overrides keep the panel clear of
-      // a device notch or home indicator in either orientation (needs
+      // The outer gutter, and the only margin the workspace has. Full-width
+      // pass: `lg:p-6` (24px a side) is down to `lg:p-3` (12px) -- the glass
+      // panels are rounded cards and still need a few pixels of ground to
+      // sit on, but not the 48px of combined horizontal inset they used to
+      // take before the shell's own max-width even applied. The four
+      // `env(safe-area-inset-*)` overrides keep the panels clear of a device
+      // notch or home indicator in either orientation (needs
       // `viewport-fit: cover` in layout.tsx's own viewport export, or these
       // resolve to 0 and this is a no-op on top of the plain padding above).
-      className="workspace-root relative flex h-dvh w-full items-center justify-center overflow-hidden p-2 pt-[max(0.5rem,env(safe-area-inset-top))] pr-[max(0.5rem,env(safe-area-inset-right))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))] sm:p-4 lg:p-6"
+      className="workspace-root relative flex h-dvh w-full items-stretch justify-center overflow-hidden p-2 pt-[max(0.5rem,env(safe-area-inset-top))] pr-[max(0.5rem,env(safe-area-inset-right))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))] sm:p-2.5 lg:p-3"
       data-glass={glass}
       data-preset={background}
       data-provider={provider}
@@ -278,122 +291,120 @@ export function WorkspaceLayout() {
         ))}
       </div>
 
-      <main
-        className="relative z-10 flex h-full max-h-[720px] w-full max-w-[1360px] items-stretch justify-center gap-4 lg:gap-5"
-        ref={setMainEl}
-      >
-        <ConversationSidebar
-          activeId={activeId}
-          conversations={saved}
-          desktopSidebarCollapsed={desktopSidebarCollapsed}
-          mobileOpen={overlay === "sidebar"}
-          onDelete={deleteConversation}
-          onMobileClose={() => setActiveOverlay(null)}
-          onNew={newConversation}
-          onRename={renameConversation}
-          onSelect={selectConversation}
-          onSettingsOpenChange={(open) => setActiveOverlay(open ? "settings" : null)}
-          onSearchQueryChange={setSearchQuery}
-          onSelectSearchResult={selectSearchResult}
-          portalContainer={mainEl}
-          searchQuery={searchQuery}
-          settingsOpen={overlay === "settings"}
-          storageStatus={storageStatus}
-        />
-
-        <section
-          // Responsive UI refinement: `p-3` below `sm` for the same reason
-          // as `workspace-root`'s own padding above -- `lg:p-7` upward is
-          // unchanged from before.
-          className="optical-glass relative flex min-w-0 flex-1 flex-col rounded-[32px] p-3 sm:p-5 lg:p-7"
-          ref={hostRef}
-        >
-          {isUltra ? (
-            <div aria-hidden="true" className="edge-glint" ref={glintRef} />
-          ) : null}
-
-          <ChatHeader onToggleSidebar={toggleSidebar} sidebarVisible={sidebarVisible} title={title} />
-
-          <MessageList
-            // Keyed by conversation so the entrance-animation baseline is
-            // rebuilt on switch instead of animating the whole transcript.
-            key={activeId ?? "none"}
-            error={notConfigured && !error ? "MISSING_KEY" : error}
-            errorInfo={errorInfo}
-            highlightMessageId={highlightMessageId}
-            messages={messages}
-            onEditResend={editAndResend}
-            onHighlightHandled={handleHighlightHandled}
-            onRegenerate={regenerate}
-            onRemoveAttachment={(messageId, attachmentId) => {
-              if (activeId) removeAttachment(activeId, messageId, attachmentId);
-            }}
-            onRetry={retry}
-            onSelectVersion={(messageId, versionId) => {
-              if (activeId) selectMessageVersion(activeId, messageId, versionId);
-            }}
-            onUsePrompt={(text) => composerRef.current?.setText(text)}
-            provider={provider}
-            // F5: the provider the failed/in-flight request actually
-            // targeted, not necessarily the one now selected.
-            requestProvider={requestProviderId ?? provider}
+      <AppShell
+        header={
+          <AppHeader
+            onToggleSettings={() =>
+              setActiveOverlay((prev) => (prev === "settings" ? null : "settings"))
+            }
+            onToggleSidebar={toggleSidebar}
+            settingsOpen={overlay === "settings"}
+            sidebarVisible={sidebarVisible}
+            title={title}
+          />
+        }
+        overlays={
+          <SettingsOverlay
+            background={background}
+            glass={glass}
+            onChangeSpeechRate={setSpeechRate}
+            onChangeSpeechVoice={setSpeechVoiceId}
+            onClose={() => setActiveOverlay(null)}
+            onDeleteAllConversations={deleteAllConversations}
+            onExportConversations={exportConversations}
+            exportableConversations={saved}
+            onChangeSpeechVoiceGender={setSpeechVoiceGender}
+            onSavePreferences={setPreferences}
+            onSectionChange={setSettingsSection}
+            onSelectBackground={setBackground}
+            onSelectGlass={setGlass}
+            onSelectTextSize={setTextSize}
+            open={overlay === "settings"}
+            portalContainer={shellEl}
+            preferences={preferences}
+            section={settingsSection}
             speechRate={speechRate}
+            speechSupported={speechSupported}
             speechVoiceGender={speechVoiceGender}
             speechVoiceId={speechVoiceId}
-            status={status}
+            textSize={textSize}
+            voices={speechVoices}
           />
-
-          <MessageComposer
-            availability={availability}
-            conversationFull={conversationFull}
-            conversationStarted={messages.length > 0}
-            hasOversizedHistoryMessage={hasOversizedHistoryMessage}
-            disabled={!hydrated || !providerReady}
-            disabledReason={
-              !providerReady
-                ? `Add ${providerKeyName(provider)} to .env.local to start chatting.`
-                : undefined
-            }
-            handleRef={composerRef}
-            onProviderMenuOpenChange={(open) => setActiveOverlay(open ? "provider" : null)}
-            onSelectProvider={(id) => {
-              if (activeId) setConversationProvider(activeId, id);
-            }}
-            onSend={send}
-            onStartNewConversation={newConversation}
-            onStop={stop}
-            portalContainer={mainEl}
-            provider={provider}
-            providerMenuOpen={overlay === "provider"}
-            status={status}
+        }
+        shellRef={setShellEl}
+        sidebar={
+          <ConversationSidebar
+            activeId={activeId}
+            conversations={saved}
+            desktopSidebarCollapsed={desktopSidebarCollapsed}
+            mobileOpen={overlay === "sidebar"}
+            onDelete={deleteConversation}
+            onMobileClose={() => setActiveOverlay(null)}
+            onNew={newConversation}
+            onRename={renameConversation}
+            onSelect={selectConversation}
+            onSearchQueryChange={setSearchQuery}
+            onSelectSearchResult={selectSearchResult}
+            portalContainer={shellEl}
+            searchQuery={searchQuery}
+            storageStatus={storageStatus}
           />
-        </section>
-      </main>
+        }
+      >
+        <MessageList
+          // Keyed by conversation so the entrance-animation baseline is
+          // rebuilt on switch instead of animating the whole transcript.
+          key={activeId ?? "none"}
+          error={notConfigured && !error ? "MISSING_KEY" : error}
+          errorInfo={errorInfo}
+          highlightMessageId={highlightMessageId}
+          messages={messages}
+          onEditResend={editAndResend}
+          onHighlightHandled={handleHighlightHandled}
+          onRegenerate={regenerate}
+          onRemoveAttachment={(messageId, attachmentId) => {
+            if (activeId) removeAttachment(activeId, messageId, attachmentId);
+          }}
+          onRetry={retry}
+          onSelectVersion={(messageId, versionId) => {
+            if (activeId) selectMessageVersion(activeId, messageId, versionId);
+          }}
+          onUsePrompt={(text) => composerRef.current?.setText(text)}
+          provider={provider}
+          // F5: the provider the failed/in-flight request actually
+          // targeted, not necessarily the one now selected.
+          requestProvider={requestProviderId ?? provider}
+          speechRate={speechRate}
+          speechVoiceGender={speechVoiceGender}
+          speechVoiceId={speechVoiceId}
+          status={status}
+        />
 
-      <SettingsOverlay
-        background={background}
-        glass={glass}
-        onChangeSpeechRate={setSpeechRate}
-        onChangeSpeechVoice={setSpeechVoiceId}
-        onClose={() => setActiveOverlay(null)}
-        onDeleteAllConversations={deleteAllConversations}
-        onExportConversations={exportConversations}
-        exportableConversations={saved}
-        onChangeSpeechVoiceGender={setSpeechVoiceGender}
-        onSavePreferences={setPreferences}
-        onSelectBackground={setBackground}
-        onSelectGlass={setGlass}
-        onSelectTextSize={setTextSize}
-        open={overlay === "settings"}
-        portalContainer={mainEl}
-        preferences={preferences}
-        speechRate={speechRate}
-        speechSupported={speechSupported}
-        speechVoiceGender={speechVoiceGender}
-        speechVoiceId={speechVoiceId}
-        textSize={textSize}
-        voices={speechVoices}
-      />
+        <MessageComposer
+          availability={availability}
+          conversationFull={conversationFull}
+          conversationStarted={messages.length > 0}
+          hasOversizedHistoryMessage={hasOversizedHistoryMessage}
+          disabled={!hydrated || !providerReady}
+          disabledReason={
+            !providerReady
+              ? `Add ${providerKeyName(provider)} to .env.local to start chatting.`
+              : undefined
+          }
+          handleRef={composerRef}
+          onProviderMenuOpenChange={(open) => setActiveOverlay(open ? "provider" : null)}
+          onSelectProvider={(id) => {
+            if (activeId) setConversationProvider(activeId, id);
+          }}
+          onSend={send}
+          onStartNewConversation={newConversation}
+          onStop={stop}
+          portalContainer={shellEl}
+          provider={provider}
+          providerMenuOpen={overlay === "provider"}
+          status={status}
+        />
+      </AppShell>
     </div>
   );
 }
