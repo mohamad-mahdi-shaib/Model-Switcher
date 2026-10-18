@@ -5,7 +5,7 @@ A glassmorphic AI chat interface built for the Numbase Project 1 brief. Next.js
 abstraction layer.
 
 **Both providers are now verified against their live APIs.** An end-to-end
-acceptance run on 2026-09-21 streamed real answers from GPT and Gemini in one
+acceptance run on 2026-09-21 streamed real answers from OpenAI and Gemini in one
 conversation, carried context across providers, and survived a refresh. See
 "Provider status" below.
 
@@ -17,6 +17,51 @@ drawer opened from the header; at and above it, the sidebar is inline and
 collapsible from the same control.
 
 ---
+
+## Features
+
+Everything listed here is implemented and reachable in the running app.
+
+**Chat**
+- Streaming replies over NDJSON, rendered progressively with a paced reveal
+  (`src/lib/reveal.ts`), with a typing indicator and a stream caret.
+- Stop a reply mid-flight; retry a failed turn against the provider it was
+  actually sent to; regenerate an answer, keeping previous versions switchable.
+- Edit and resend your last question.
+- Copy any answer, or have it read aloud by the browser's speech synthesis
+  (`src/lib/use-speech.ts`).
+- Markdown rendering with link/HTML safety (`src/lib/markdown.ts`).
+- Attachments: images, PDFs and text files, with oversized photos
+  auto-compressed before sending (`src/lib/attachments.ts`).
+
+**Providers**
+- Two: Gemini and OpenAI, behind one provider-neutral endpoint. A provider is
+  offered only when an adapter exists and the server reports its key present.
+- Switching mid-conversation asks for confirmation (every later message sends
+  the whole conversation so far), is refused while a request is in flight, and
+  never re-labels answers already on screen.
+
+**Conversations**
+- Saved per-browser in `localStorage`, with titles derived locally from the
+  first message, recency grouping, rename and delete.
+- Local search across conversation titles and message text
+  (`src/lib/search.ts`), jumping to and briefly highlighting the match.
+- Export selected conversations to PDF (`src/lib/conversation-pdf.ts`), and
+  delete all conversations, both from Settings.
+
+**Settings** (the gear in the global header — the only entry point)
+- Appearance: wallpaper, glass style, text size.
+- Personalizations: a preferred name and custom instructions, sent with every
+  later request as the provider's own instruction field
+  (`src/server/preferences.ts`).
+- Read aloud: voice, reading speed, voice tone.
+- Conversations: export and delete-all.
+
+**Layout**
+- Header, sidebar and main content as real landmarks, with the composer sticky
+  at the bottom of main and the transcript scrolling independently.
+- Responsive: the sidebar is inline and collapsible at >=1024px and a
+  focus-trapped drawer below that.
 
 ## Prerequisites
 
@@ -57,7 +102,7 @@ variables in the running process.
 | --- | --- | --- |
 | `GEMINI_API_KEY` | for Gemini | Server-side Gemini credential. Never sent to the browser. |
 | `GEMINI_MODEL` | no | Defaults to `gemini-3.6-flash` (stable, free tier). |
-| `OPENAI_API_KEY` | for GPT | Server-side OpenAI credential. Requires a funded account. |
+| `OPENAI_API_KEY` | for OpenAI | Server-side OpenAI credential. Requires a funded account. |
 | `OPENAI_MODEL` | no | Defaults to `gpt-5.6-luna`, the cost-optimised tier. See "Which OpenAI model" below before overriding it. |
 
 A provider is offered in the UI only when an adapter exists **and** the server
@@ -70,7 +115,7 @@ known without spending a request.
 | Provider | Adapter | Key | Verified |
 | --- | --- | --- | --- |
 | Gemini | ships | `GEMINI_API_KEY` | **against the live API** |
-| GPT | ships | `OPENAI_API_KEY` | **against the live API** — real streamed answers, real token usage |
+| OpenAI | ships | `OPENAI_API_KEY` | **against the live API** — real streamed answers, real token usage |
 
 Only providers the app can actually reach are offered. Anthropic has no adapter
 and is not listed in the selector: a permanently inert control is noise, and
@@ -94,7 +139,7 @@ reading incremental text from `response.output_text.delta` events.
 
 The brief's wording is "GPT-4". That model generation is no longer the current
 API surface, so following the words literally would have meant shipping against
-a superseded model. The selector therefore says **GPT** — the vendor, which is
+a superseded model. The selector therefore says **OpenAI** — the vendor, which is
 what the brief is really asking for — and the exact model id in use is printed
 next to it in the header, read from the server rather than hardcoded in the UI.
 There is no wording anywhere that claims GPT-4.
@@ -128,11 +173,20 @@ and no reply is ever simulated.
 ## Scripts
 
 ```bash
-npm run dev     # dev server
-npm run build   # production build (type-checks)
+npm run dev     # dev server on http://localhost:3000
+npm run build   # production build (also type-checks)
+npm start       # serve the production build (run `npm run build` first)
 npm run lint    # eslint
 npm test        # unit + adapter contract tests (no network, no quota)
 ```
+
+To run the production build locally:
+
+```bash
+npm run build && npm start     # http://localhost:3000
+```
+
+`npm start` serves the output of the last `npm run build`; it does not rebuild.
 
 ---
 
@@ -289,7 +343,7 @@ line.
 ```ts
 export const myProvider: ChatProvider = {
   id: "gpt",
-  label: "GPT",
+  label: "OpenAI",
   capabilities: { streaming: true, multiTurn: true, cancellation: true },
   availability: () => ({
     configured: Boolean(process.env.OPENAI_API_KEY?.trim()),
