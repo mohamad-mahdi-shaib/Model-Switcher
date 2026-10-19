@@ -154,19 +154,63 @@ function toOutcome(finishReason: string): { outcome: StreamOutcome; reason?: str
 export function classifyOpenRouterError(error: unknown): ProviderError {
   if (error instanceof ProviderError) return error;
 
-  const err = error as { name?: string; statusCode?: number; status?: number; message?: string };
+  /**
+   * The status is not reliably on the error that reaches us.
+   *
+   * Found in live testing against the deployed app: a real OpenRouter 402
+   * ("insufficient credit") surfaced from `/api/images` with its status
+   * intact, but the SAME upstream failure arriving through `streamText`
+   * reached this function wrapped -- the AI SDK nests the original
+   * `APICallError` under `cause` (and, on a retried call, under
+   * `lastError`/`errors[]`), so a top-level `statusCode` read found nothing
+   * and every billing failure was reported as a generic UPSTREAM error.
+   * That told the user "the provider could not be reached" when the true
+   * answer was "this account has no credit" -- opposite advice.
+   *
+   * Walking the chain fixes it at the source, for every wrapper shape rather
+   * than the one that happened to be observed.
+   */
+  const seen = new Set<unknown>();
+  let status: number | undefined;
+  let bodyText = "";
+  const visit = (value: unknown, depth: number): void => {
+    if (!value || typeof value !== "object" || depth > 6 || seen.has(value)) return;
+    seen.add(value);
+    const node = value as Record<string, unknown>;
+    if (status === undefined && typeof node.statusCode === "number") status = node.statusCode;
+    if (status === undefined && typeof node.status === "number") status = node.status;
+    if (typeof node.responseBody === "string") bodyText += ` ${node.responseBody}`;
+    if (typeof node.message === "string") bodyText += ` ${node.message}`;
+    visit(node.cause, depth + 1);
+    visit(node.lastError, depth + 1);
+    visit(node.error, depth + 1);
+    visit(node.data, depth + 1);
+    if (Array.isArray(node.errors)) for (const e of node.errors) visit(e, depth + 1);
+  };
+  visit(error, 0);
+
+  const err = error as { name?: string; message?: string };
   const name = err?.name ?? "";
-  const message = (err?.message ?? "").toLowerCase();
-  const status = err?.statusCode ?? err?.status;
+  const message = `${err?.message ?? ""}${bodyText}`.toLowerCase();
+
+  // OpenRouter words a 402 several ways; match the wording as well as the
+  // code, so a credit failure is never reported as a transport problem.
+  if (
+    status === 402 ||
+    message.includes("insufficient credit") ||
+    message.includes("insufficient_quota") ||
+    message.includes("requires more credits") ||
+    message.includes("can only afford") ||
+    message.includes("add more credits")
+  ) {
+    return new ProviderError("INSUFFICIENT_CREDIT", { cause: error });
+  }
 
   if (name === "AbortError" || message.includes("aborted")) {
     return new ProviderError("ABORTED", { cause: error });
   }
   if (status === 401 || status === 403) {
     return new ProviderError("INVALID_KEY", { cause: error });
-  }
-  if (status === 402 || message.includes("insufficient credit") || message.includes("quota")) {
-    return new ProviderError("INSUFFICIENT_CREDIT", { cause: error });
   }
   if (status === 429) {
     return new ProviderError("RATE_LIMIT", { retryable: true, cause: error });
@@ -268,16 +312,29 @@ export function createOpenRouterProvider(model: OpenRouterModel): ChatProvider {
       return (async function* (): AsyncIterable<ProviderChunk> {
         let sawText = false;
         try {
-          for await (const delta of result.textStream) {
-            // Drain anything the tool produced before this delta, so the
-            // image appears in the transcript at the point the model starts
-            // talking about it rather than after the whole reply.
+          /**
+           * `fullStream`, not `textStream`: the AI SDK reports a failed
+           * request as an `error` PART rather than by throwing, so iterating
+           * `textStream` alone ends quietly and the turn looks merely empty.
+           * Live testing showed exactly that -- a billing failure produced no
+           * text and no explanation. Reading the full stream lets a real
+           * failure be classified and thrown like any other.
+           */
+          for await (const part of result.fullStream) {
+            // Drain anything the tool produced first, so the image appears at
+            // the point the model starts talking about it.
             while (pendingImages.length > 0) {
               yield { type: "image", image: pendingImages.shift()! };
             }
-            if (delta.length === 0) continue;
-            sawText = true;
-            yield { type: "delta", text: delta };
+            if (part.type === "error") {
+              throw classifyOpenRouterError(part.error);
+            }
+            if (part.type === "text-delta") {
+              const delta = part.text ?? "";
+              if (delta.length === 0) continue;
+              sawText = true;
+              yield { type: "delta", text: delta };
+            }
           }
         } catch (error) {
           throw classifyOpenRouterError(error);

@@ -130,7 +130,8 @@ export async function POST(request: Request) {
     return errorResponse(
       "BAD_REQUEST",
       400,
-      `A ${operation} needs the image it is working from.`,
+      // "An edit", "A variation" -- the article has to follow the word.
+      `${operation === "edit" ? "An" : "A"} ${operation} needs the image it is working from.`,
     );
   }
 

@@ -4,25 +4,64 @@ Status labels: **VERIFIED** (evidence recorded below), **PARTIAL**,
 **BLOCKED**, **NOT IMPLEMENTED**.
 
 Baseline commit at start of Project 3: `a5763db` on `main`, working tree clean.
-All Project 3 work is currently **uncommitted** in the working tree.
+Project 3 landed in commit `949998a`; the live-verification fixes that follow
+it are a further commit on top.
 
 ---
 
 ## The one blocker
 
-**`OPENROUTER_API_KEY` is not configured** — not in `.env.local` (which holds
-`GEMINI_API_KEY`, `GEMINI_MODEL`, `OPENAI_API_KEY`) and not in the Vercel
-project (which holds `GEMINI_API_KEY`, `OPENAI_API_KEY`, `GEMINI_MODEL`).
+`OPENROUTER_API_KEY` **is now configured** in the Vercel project (Production)
+and the integration is live. The remaining blocker is **billing**: the
+OpenRouter account has **no credit**, so every paid model returns HTTP 402.
 
-Everything that depends on OpenRouter is **implemented and unit-tested but not
-live-verified**: the two OpenRouter vision models, image generation, and the
-model-selected tool call. No mock stands in for any of it, and nothing that
-has not actually run against a provider is labelled VERIFIED.
+What that does and does not block:
 
-**Action needed:** create a key at <https://openrouter.ai/keys>, add credit,
-then add `OPENROUTER_API_KEY` to `.env.local` and to the Vercel project.
+- **Not blocked** — the integration itself is proven live. A free model
+  (`deepseek/deepseek-chat-v3.1`) answers in production, streams, preserves
+  history, and the capability gate works.
+- **Blocked** — the two vision models, image generation, and the final step
+  of the tool call, all of which are paid.
 
----
+**Action needed:** add credit at <https://openrouter.ai/credits>, then re-run
+`scratchpad/live-verify.py`. Nothing else is outstanding for those rows.
+
+### Live run, 2026-10-20, against https://model-switcher.vercel.app
+
+| Check | Result |
+| --- | --- |
+| `/api/chat` reports all 5 models configured | PASS |
+| `/api/images` reports configured | PASS |
+| Free model answers a plain question | PASS — replied "4" |
+| Plain question does NOT generate an image | PASS — 0 images |
+| History preserved into an OpenRouter model | PASS — recalled "73" |
+| Streaming ends with a confirmed outcome | PASS — `outcome=complete` |
+| Capability gate on the text-only model | PASS — model said it cannot analyse the image; no image part was sent |
+| **The model CALLED the image tool** | **PASS (partial)** — the model answered *"Yes, I can generate images for you. I apologize — it appears that the image generation service is currently unavailable due to a credit issue."* That is the tool being selected, executed server-side, hitting the 402 and relaying it. Everything but the image itself is proven. |
+| Vision on Claude Sonnet 4.5 / Qwen2.5-VL | BLOCKED — 402 |
+| Text-to-image / reference / edit / variation | BLOCKED — 402 |
+| Validation refuses an edit with no source image | PASS — 400, pre-provider |
+
+### Two real bugs the live run found and fixed
+
+1. **Billing errors were mis-reported in the chat path.** A 402 through
+   `/api/images` carried its status, but the same failure through `streamText`
+   arrived *wrapped*, so a top-level status read missed it and every billing
+   failure surfaced as a generic `UPSTREAM` "could not reach the provider" —
+   the opposite advice to the truth. `classifyOpenRouterError` now walks the
+   `cause` / `lastError` / `errors[]` chain and matches OpenRouter's credit
+   wording. Confirmed fixed live: Claude Sonnet 4.5 now returns
+   `INSUFFICIENT_CREDIT`. Seven regression tests added.
+2. **A failed request could end silently.** `streamText` reports a request
+   failure as an `error` *part* rather than by throwing, so iterating
+   `textStream` alone ended the turn with no text and no explanation. The
+   adapter now reads `fullStream` and classifies the error part.
+
+Still imperfect: `qwen/qwen2.5-vl-72b-instruct` returns an error whose shape
+carries no recognisable status or credit wording, so it falls back to
+`UPSTREAM`. That is the correct conservative behaviour for an unrecognised
+failure, but it is less specific than it could be — worth re-checking once
+there is credit, when the request should simply succeed.
 
 ## Phase 1 — Audit (complete)
 
@@ -47,7 +86,7 @@ Baseline checks at audit time: `npm test` 199/199, `tsc` clean, `eslint` 0,
 
 ---
 
-## Phases 2-5 — Implementation (complete, pending live verification)
+## Phases 2-5 — Implementation (complete; paid paths pending credit)
 
 ### Added
 
@@ -60,7 +99,7 @@ Baseline checks at audit time: `npm test` 199/199, `tsc` clean, `eslint` 0,
 | `src/server/storage/images.ts` | Vercel Blob storage, with an inline fallback |
 | `src/app/api/images/route.ts` | `POST` generate / `GET` capability probe |
 | `src/components/workspace/GeneratedImages.tsx` | Renders generated images; Download / Regenerate / Make a variation |
-| `tests/openrouter.test.ts` | 14 tests: serialisation, capability gating, error mapping, catalogue integrity |
+| `tests/openrouter.test.ts` | 21 tests: serialisation, capability gating, error mapping (incl. 7 for the wrapped-error bug found live), catalogue integrity |
 | `tests/images-route.test.ts` | 14 tests: the whole validation layer + unconfigured-server behaviour |
 
 ### Changed (all additive; old saved conversations load unchanged)
@@ -91,13 +130,13 @@ generation goes through `chat()`, not `imageModel()`.
 | Upload: picker, drag-drop, paste, preview, remove, multiple | **VERIFIED** | pre-existing; 274 browser checks still pass |
 | Validation + clear errors | **VERIFIED** | unit tests + `images-route` suite |
 | Image understanding, Gemini + OpenAI | **VERIFIED** | pre-existing, previously live-verified |
-| Two distinct OpenRouter vision models | **BLOCKED** | implemented + catalogue-verified ids; no key to run them |
+| Two distinct OpenRouter vision models | **BLOCKED** | implemented; key live, both return 402 (no credit) |
 | OCR / image questions / comparison | **PARTIAL** | transport supports it (3 attachments, multi-image parts); no live run recorded |
-| Text-to-image | **BLOCKED** | implemented; needs a key |
-| Reference-image generation | **BLOCKED** | implemented; needs a key |
-| Editing / variations / regenerate | **BLOCKED** | implemented, incl. real source-image round trip; needs a key |
+| Text-to-image | **BLOCKED** | implemented; 402 (no credit) |
+| Reference-image generation | **BLOCKED** | implemented; 402 (no credit) |
+| Editing / variations / regenerate | **BLOCKED** | implemented; 402 (no credit) |
 | Download | **PARTIAL** | implemented via fetch→Blob→object URL (works for data: and cross-origin); no generated image yet to download live |
-| Model-selected tool calling | **BLOCKED** | implemented with AI SDK `tool()` + loop guard; needs a key |
+| Model-selected tool calling | **PARTIAL** | live: the model selects and invokes the tool, which executes server-side; only the image itself is blocked by the 402 |
 | Context preserved across model switches | **VERIFIED** | pre-existing behaviour + new unit tests for serialisation order |
 | Unsupported capability handled explicitly | **VERIFIED** | `toModelMessages` tests + composer warning |
 | Storage | **PARTIAL** | Blob integration written; no `BLOB_READ_WRITE_TOKEN`, so the inline path is what runs |
@@ -110,7 +149,7 @@ generation goes through `chat()`, not `imageModel()`.
 | Command | Result |
 | --- | --- |
 | `npm test` (baseline) | 199/199 |
-| `npm test` (now) | **227/227** (+28 new) |
+| `npm test` (now) | **234/234** (+35 new) |
 | `npx tsc --noEmit` | clean |
 | `npx eslint` | exit 0 |
 | `npm run build` | succeeded; `/api/images` listed as a dynamic route |

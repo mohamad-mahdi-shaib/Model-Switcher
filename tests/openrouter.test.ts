@@ -12,11 +12,12 @@ import type { WireMessage } from "@/lib/chat";
  * adapters from disagreeing.
  *
  * NOTE ON SCOPE: nothing here calls OpenRouter. These tests prove the parts
- * that are decidable without a key. The live round trips -- a real image
- * analysed by each of the two vision models, a real generated image, a real
- * model-selected tool call -- are NOT covered here and are not claimed to be
- * verified anywhere else either; see PROJECT3_PROGRESS.md, which records them
- * as blocked on `OPENROUTER_API_KEY`.
+ * that are decidable without spending a provider call. The live round trips --
+ * a real image analysed by each of the two vision models, a real generated
+ * image, a real model-selected tool call -- are NOT covered here and are not
+ * claimed to be verified anywhere else either; see PROJECT3_PROGRESS.md, which
+ * records what the live run did and did not reach. The key IS configured; the
+ * account has no credit, which is why the paid models return 402.
  */
 
 const IMAGE_B64 = "iVBORw0KGgo=";
@@ -118,6 +119,59 @@ test("only transient classes are marked retryable", () => {
   assert.equal(classifyOpenRouterError({ statusCode: 503 }).retryable, true);
   assert.equal(classifyOpenRouterError({ statusCode: 401 }).retryable, false);
   assert.equal(classifyOpenRouterError({ statusCode: 400 }).retryable, false);
+});
+
+/**
+ * Found by live testing against the deployed app, not by reading code: a real
+ * OpenRouter 402 arrives with its status intact through `generateText`, but
+ * the SAME failure through `streamText` reaches the classifier WRAPPED, so a
+ * top-level status read missed it and every billing failure was reported as a
+ * generic UPSTREAM "could not reach the provider" -- the opposite advice to
+ * the truth. These cover each wrapper shape the SDK uses.
+ */
+test("a 402 nested inside a wrapper is still INSUFFICIENT_CREDIT", () => {
+  const wrapped = { name: "AI_RetryError", message: "failed after 3 attempts", cause: { statusCode: 402 } };
+  assert.equal(classifyOpenRouterError(wrapped).code, "INSUFFICIENT_CREDIT");
+});
+
+test("a 402 nested two levels deep is found", () => {
+  const deep = { message: "x", cause: { message: "y", cause: { statusCode: 402 } } };
+  assert.equal(classifyOpenRouterError(deep).code, "INSUFFICIENT_CREDIT");
+});
+
+test("a retry error carrying the status in `lastError` is found", () => {
+  assert.equal(
+    classifyOpenRouterError({ name: "AI_RetryError", lastError: { statusCode: 429 } }).code,
+    "RATE_LIMIT",
+  );
+});
+
+test("an errors[] array is searched too", () => {
+  assert.equal(
+    classifyOpenRouterError({ errors: [{ message: "a" }, { statusCode: 401 }] }).code,
+    "INVALID_KEY",
+  );
+});
+
+test("OpenRouter's credit wording is matched even with no status anywhere", () => {
+  for (const message of [
+    "This request requires more credits, or fewer max_tokens",
+    "Insufficient credit to run this model",
+    "You can only afford 0 tokens",
+  ]) {
+    assert.equal(classifyOpenRouterError({ message }).code, "INSUFFICIENT_CREDIT", message);
+  }
+});
+
+test("a credit message found in a nested responseBody is matched", () => {
+  const error = { message: "API call failed", cause: { responseBody: '{"error":{"message":"requires more credits"}}' } };
+  assert.equal(classifyOpenRouterError(error).code, "INSUFFICIENT_CREDIT");
+});
+
+test("a cyclic error object does not hang the classifier", () => {
+  const a: Record<string, unknown> = { message: "boom" };
+  a.cause = a;
+  assert.equal(classifyOpenRouterError(a).code, "UPSTREAM");
 });
 
 test("an abort is classified as ABORTED, never as a provider failure", () => {

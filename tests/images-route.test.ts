@@ -71,7 +71,7 @@ test("an edit with no source image is refused rather than silently generated", a
   const response = await POST(post({ prompt: "make it blue", operation: "edit" }));
   assert.equal(response.status, 400);
   const payload = (await response.json()) as { detail?: string };
-  assert.match(payload.detail ?? "", /needs the image it is working from/);
+  assert.match(payload.detail ?? "", /^An edit needs the image it is working from\.$/);
 });
 
 test("a variation with no source image is refused for the same reason", async () => {
