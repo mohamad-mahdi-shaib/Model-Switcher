@@ -1,4 +1,10 @@
-import type { ChatErrorCode, ChatErrorInfo, StreamOutcome, WireMessage } from "@/lib/chat";
+import type {
+  ChatErrorCode,
+  ChatErrorInfo,
+  GeneratedImageRef,
+  StreamOutcome,
+  WireMessage,
+} from "@/lib/chat";
 import type { Preferences } from "@/lib/preferences";
 import type { ProviderId } from "@/lib/providers";
 
@@ -31,6 +37,13 @@ export type ProviderDelta = { text: string };
  */
 export type ProviderChunk =
   | ({ type: "delta" } & ProviderDelta)
+  /**
+   * Project 3: an image produced by a tool call during this turn. Optional
+   * for an adapter to emit -- the two direct integrations never do -- and
+   * the route simply forwards it, so adding it did not change how any
+   * existing adapter behaves.
+   */
+  | { type: "image"; image: GeneratedImageRef }
   | { type: "outcome"; outcome: StreamOutcome; reason?: string };
 
 /** Normalised failure. Adapters translate vendor errors into this. */

@@ -34,9 +34,22 @@ Everything listed here is implemented and reachable in the running app.
 - Attachments: images, PDFs and text files, with oversized photos
   auto-compressed before sending (`src/lib/attachments.ts`).
 
+**Images (multimodal)**
+- Upload by file picker, drag-and-drop or clipboard paste; preview and remove
+  before sending; up to 3 attachments per message.
+- Image understanding — description, visual analysis, questions, OCR and
+  multi-image comparison — on four vision models from four vendors.
+- Image generation from a text prompt, from a reference image, and editing or
+  varying an existing image (`src/server/images/generate.ts`).
+- The chat model calls the image tool itself when a request needs a picture
+  (`src/server/images/tool.ts`); no mode switch, no separate button.
+- Download, Regenerate and Make a variation on every generated image.
+
 **Providers**
-- Two: Gemini and OpenAI, behind one provider-neutral endpoint. A provider is
-  offered only when an adapter exists and the server reports its key present.
+- Five models behind one provider-neutral endpoint: Gemini and OpenAI direct,
+  plus Claude Sonnet 4.5, Qwen2.5-VL 72B and DeepSeek V3.1 through OpenRouter.
+  A model is offered only when an adapter exists and the server reports its
+  key present.
 - Switching mid-conversation asks for confirmation (every later message sends
   the whole conversation so far), is refused while a request is in flight, and
   never re-labels answers already on screen.
@@ -104,6 +117,10 @@ variables in the running process.
 | `GEMINI_MODEL` | no | Defaults to `gemini-3.6-flash` (stable, free tier). |
 | `OPENAI_API_KEY` | for OpenAI | Server-side OpenAI credential. Requires a funded account. |
 | `OPENAI_MODEL` | no | Defaults to `gpt-5.6-luna`, the cost-optimised tier. See "Which OpenAI model" below before overriding it. |
+| `OPENROUTER_API_KEY` | for the OpenRouter models and all image generation | One key serves Claude Sonnet 4.5, Qwen2.5-VL 72B, DeepSeek V3.1 and the image model. Create one at <https://openrouter.ai/keys>. |
+| `OPENROUTER_IMAGE_MODEL` | no | Defaults to `google/gemini-2.5-flash-image`. |
+| `OPENROUTER_SITE_URL` / `OPENROUTER_SITE_NAME` | no | Optional attribution headers for OpenRouter's public rankings. Not secrets. |
+| `BLOB_READ_WRITE_TOKEN` | no | Vercel Blob. When set, generated images are stored and the conversation keeps a short URL instead of inline base64. Without it the app still works; images live in the browser only. |
 
 A provider is offered in the UI only when an adapter exists **and** the server
 reports its key present. "Configured" means exactly that: a key is present. It
@@ -417,6 +434,74 @@ All of it (wallpaper, glass, text size, personalizations, read-aloud voice and
 rate) is saved to `localStorage` under `model-switcher:settings` with the same
 versioned, field-by-field-validating approach used for conversations.
 
+## Multimodal: vision, image generation and tool calling
+
+### Models actually implemented
+
+Every id and capability below was read from OpenRouter's own catalogue
+(`GET https://openrouter.ai/api/v1/models`), not from memory — see
+`src/lib/models.ts`, which records the modalities each one reports.
+
+| Model | Reached via | Image input | Image output |
+| --- | --- | --- | --- |
+| `gemini-3.6-flash` | Google direct (`@google/genai`) | yes | no |
+| `gpt-5.6-luna` | OpenAI direct (Responses API) | yes | no |
+| `anthropic/claude-sonnet-4.5` | OpenRouter | yes | no |
+| `qwen/qwen2.5-vl-72b-instruct` | OpenRouter | yes | no |
+| `deepseek/deepseek-chat-v3.1` | OpenRouter | **no** (text only) | no |
+| `google/gemini-2.5-flash-image` | OpenRouter (generation only) | yes | **yes** |
+
+The two OpenRouter vision models are deliberately from different vendors, so
+"two distinct vision models" means two genuinely different models rather than
+one model under two names. DeepSeek V3.1 is registered precisely *because* it
+is text-only: it makes the capability gate below a real, reachable path.
+
+### How image understanding works
+
+The browser stages an attachment (type sniffed by magic bytes, oversized
+photos re-encoded under the size cap), keeps the bytes in IndexedDB and the
+metadata on the message. On send, the bytes become base64 on the wire, and
+each adapter translates them into its own provider's format: `inlineData`
+for Gemini, `input_image` for OpenAI, AI SDK image parts for OpenRouter.
+
+**Capability gating.** `toModelMessages()` never sends an image part to a
+model whose catalogue entry says text only. The attachment is not silently
+dropped either — it is named in the message text, and the composer warns
+before you send. Switching models mid-conversation keeps the whole history,
+including earlier image attachments.
+
+### How image generation works
+
+`google/gemini-2.5-flash-image` is a chat model that emits images, so one
+integration covers everything: a prompt alone is text-to-image, a prompt plus
+an attached image is reference-guided generation, an edit or a variation. The
+installed `@openrouter/ai-sdk-provider` maps the returned `message.images[]`
+onto AI SDK file parts; `modalities: ["image","text"]` is passed through
+`extraBody`, which OpenRouter requires for image output.
+
+Two entry points, on purpose:
+
+- **`POST /api/images`** — the explicit path, used by Regenerate and Make a
+  variation. The user has already decided what they want.
+- **The `generate_image` tool** — the model-selected path. Just ask for a
+  picture in the conversation and the model calls the tool itself. Execution
+  is server-side, so the key never reaches the browser, and the agent loop is
+  capped (`stopWhen: stepCountIs(2)`, one image per turn) so a model cannot
+  loop and spend.
+
+A generated image is stored on the message (`ChatMessage.images`) with the
+prompt, model and operation that produced it — which is what makes
+"Make a variation" a variation of *that* image rather than a fresh render of
+the same words.
+
+### Storage
+
+Optional. With `BLOB_READ_WRITE_TOKEN` set, generated images go to Vercel Blob
+and the conversation keeps a short https URL. Without it, images are returned
+inline and live in that browser only; the UI labels those "not stored". Blob
+URLs are public-but-unguessable (random suffix) — the README says that plainly
+rather than implying a stronger guarantee.
+
 ## Switching providers
 
 Switching is silent while a conversation is empty — there is no context to
@@ -494,6 +579,18 @@ time, so an existing deployment keeps the values it was built with.
 - **Free-tier quota.** `gemini-3.6-flash` allows 20 requests/day per project on
   the free tier. When exhausted the UI reports the limit, scope and Google's own
   retry delay.
+- **The OpenRouter features are not live-verified.** The integration is
+  written against the installed SDKs and OpenRouter's published catalogue, and
+  its decidable parts are unit-tested, but no request has been made with a real
+  `OPENROUTER_API_KEY`: the key is not configured locally or in the Vercel
+  project. Until it is, image understanding on the two OpenRouter vision
+  models, image generation, and the model-selected tool call remain
+  **implemented but unverified**. See `PROJECT3_PROGRESS.md`.
+- **One image per turn.** The tool refuses a second generation inside the same
+  message, deliberately, as a cost guard.
+- **Reference images come from the current turn.** The tool can edit or vary an
+  image attached to the message being sent; varying an image generated earlier
+  goes through the Make a variation button rather than the model.
 - **History is per-browser.** Conversations live in `localStorage` only — there
   is no account, no server-side persistence and no sync between devices or
   browsers. Clearing site data clears them. Settings behave the same way.

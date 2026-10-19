@@ -1,6 +1,8 @@
+import { OPENROUTER_CHAT_MODELS } from "@/lib/models";
 import type { ProviderId } from "@/lib/providers";
 import { geminiProvider } from "@/server/providers/gemini";
 import { openaiProvider } from "@/server/providers/openai";
+import { createOpenRouterProvider } from "@/server/providers/openrouter";
 import type { ChatProvider } from "@/server/providers/types";
 
 /**
@@ -33,8 +35,12 @@ import type { ChatProvider } from "@/server/providers/types";
 const REGISTRY = new Map<ProviderId, ChatProvider>([
   ["gemini", geminiProvider],
   ["gpt", openaiProvider],
-  // ["claude", anthropicProvider] <- needs the adapter, a ProviderId member,
-  //                                   a PROVIDERS entry and ANTHROPIC_API_KEY
+  // Project 3: every model in the OpenRouter catalogue (`@/lib/models.ts`)
+  // registers through one shared adapter, so adding another is a catalogue
+  // entry plus a `ProviderId` member -- no new file, no change here.
+  ...OPENROUTER_CHAT_MODELS.map(
+    (model) => [model.id, createOpenRouterProvider(model)] as const,
+  ),
 ]);
 
 export function getProvider(id: string): ChatProvider | null {

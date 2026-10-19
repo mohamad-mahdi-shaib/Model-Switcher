@@ -111,6 +111,26 @@ function isMessageVersion(v: unknown): boolean {
 
 const ATTACHMENT_KINDS = ["image", "pdf", "text"] as const;
 
+const IMAGE_OPERATIONS = ["generate", "edit", "variation"] as const;
+
+/**
+ * Project 3: a generated-image reference as persisted on an assistant
+ * message. Validated field by field like every other optional addition --
+ * one malformed entry must fail the payload rather than load half-formed.
+ */
+function isGeneratedImageRef(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const g = v as Record<string, unknown>;
+  return (
+    typeof g.url === "string" &&
+    typeof g.mediaType === "string" &&
+    typeof g.prompt === "string" &&
+    typeof g.model === "string" &&
+    (IMAGE_OPERATIONS as readonly unknown[]).includes(g.operation) &&
+    typeof g.persisted === "boolean"
+  );
+}
+
 /**
  * Attachment METADATA (Interaction refinement) -- name/mimeType/kind/size
  * only, exactly what `AttachmentMeta` persists. The raw bytes live in
@@ -155,7 +175,9 @@ function isMessage(v: unknown): v is ChatMessage {
     // Interaction refinement: same optional-field pattern as versions above
     // -- absent on every message saved before attachments existed, and on
     // any message that never had one.
-    (m.attachments === undefined || (Array.isArray(m.attachments) && m.attachments.every(isAttachmentMeta)))
+    (m.attachments === undefined || (Array.isArray(m.attachments) && m.attachments.every(isAttachmentMeta))) &&
+    // Project 3: generated images. Absent on every message saved before it.
+    (m.images === undefined || (Array.isArray(m.images) && m.images.every(isGeneratedImageRef)))
   );
 }
 

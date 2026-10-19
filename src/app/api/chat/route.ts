@@ -218,6 +218,11 @@ export async function POST(request: Request) {
           if (request.signal.aborted) break;
           if (chunk.type === "delta") {
             if (chunk.text) controller.enqueue(send({ type: "delta", text: chunk.text }));
+          } else if (chunk.type === "image") {
+            // Project 3: forwarded verbatim. The route stays vendor-neutral --
+            // it does not know what produced the image, only that the adapter
+            // reported one for this turn.
+            controller.enqueue(send({ type: "image", image: chunk.image }));
           } else {
             outcome = chunk.outcome;
             reason = chunk.reason;

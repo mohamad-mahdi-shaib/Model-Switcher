@@ -52,7 +52,13 @@ function errorResponse(status: number, error: object, headers: Record<string, st
   });
 }
 
-type Chunk = { type: "delta"; text: string } | { type: "outcome"; outcome: string; reason?: string };
+// Mirrors `ProviderChunk`. The `image` variant was added for Project 3's
+// tool calling; neither of these two adapters ever emits one, but the local
+// type has to admit it to stay assignable from the real contract.
+type Chunk =
+  | { type: "delta"; text: string }
+  | { type: "image"; image: unknown }
+  | { type: "outcome"; outcome: string; reason?: string };
 
 /** Concatenates only the delta chunks' text -- outcome chunks carry none. */
 async function collect(iterable: AsyncIterable<Chunk>): Promise<string> {

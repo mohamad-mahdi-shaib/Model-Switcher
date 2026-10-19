@@ -16,7 +16,17 @@
  * adapter implementing ChatProvider, and one line in the server registry.
  */
 
-export type ProviderId = "gemini" | "gpt";
+/**
+ * Project 3 added three OpenRouter-backed models. Existing ids are untouched,
+ * so every saved conversation keeps loading exactly as before -- `providerId`
+ * is a persisted value (see `storage.ts`) as well as a wire value.
+ */
+export type ProviderId =
+  | "gemini"
+  | "gpt"
+  | "or-claude"
+  | "or-qwen"
+  | "or-deepseek";
 
 export type Provider = {
   id: ProviderId;
@@ -27,10 +37,18 @@ export type Provider = {
   note?: string;
   /** Restrained accent used for identity. See --accent in globals.css. */
   accent: string;
+  /**
+   * Project 3: whether this model accepts image input, taken from
+   * OpenRouter's own catalogue for the OpenRouter models and from each
+   * adapter's own verified behaviour for the two direct integrations. The
+   * composer reads this to warn -- never to silently drop an attachment --
+   * before sending images to a model that cannot read them.
+   */
+  vision: boolean;
 };
 
 export const PROVIDERS: readonly Provider[] = [
-  { id: "gemini", label: "Gemini", enabled: true, accent: "#6f7f9b" },
+  { id: "gemini", label: "Gemini", enabled: true, accent: "#6f7f9b", vision: true },
   {
     id: "gpt",
     // Responsive UI refinement: the reviewer asked for consistent
@@ -43,6 +61,34 @@ export const PROVIDERS: readonly Provider[] = [
     enabled: true,
     note: "Not connected — no OPENAI_API_KEY configured on the server.",
     accent: "#4f8c72",
+    vision: true,
+  },
+  // --- Project 3: reached through OpenRouter, one key for all three. ---
+  {
+    id: "or-claude",
+    label: "Claude Sonnet 4.5",
+    enabled: true,
+    note: "Not connected — no OPENROUTER_API_KEY configured on the server.",
+    accent: "#a8764e",
+    vision: true,
+  },
+  {
+    id: "or-qwen",
+    label: "Qwen2.5-VL 72B",
+    enabled: true,
+    note: "Not connected — no OPENROUTER_API_KEY configured on the server.",
+    accent: "#7c6fae",
+    vision: true,
+  },
+  {
+    id: "or-deepseek",
+    label: "DeepSeek V3.1",
+    enabled: true,
+    note: "Not connected — no OPENROUTER_API_KEY configured on the server.",
+    accent: "#4a7fa5",
+    // Text-only: confirmed `input_modalities: ["text"]` in OpenRouter's
+    // catalogue. The composer warns rather than dropping images silently.
+    vision: false,
   },
 ];
 

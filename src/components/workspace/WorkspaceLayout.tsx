@@ -21,6 +21,7 @@ import {
 import { defaultAppSettings, loadAppSettings, saveAppSettings } from "@/lib/app-settings-storage";
 import { providerKeyName } from "@/lib/chat";
 import { hasOversizedMessage, MAX_MESSAGES } from "@/lib/limits";
+import type { GeneratedImageRef } from "@/lib/chat";
 import type { Preferences } from "@/lib/preferences";
 import {
   DEFAULT_PROVIDER,
@@ -78,6 +79,8 @@ export function WorkspaceLayout() {
   // (and returns null) on every render, so state kept inside it would
   // persist across opens by accident rather than by decision.
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
+  /** Project 3: a failure from an explicit Regenerate / Make-a-variation. */
+  const [imageError, setImageError] = useState<string | null>(null);
   const [availability, setAvailability] = useState<AvailabilityMap | null>(null);
   const composerRef = useRef<ComposerHandle>(null);
   // Interaction refinement: local sidebar search. Lifted here, like every
@@ -195,6 +198,7 @@ export function WorkspaceLayout() {
     renameConversation,
     deleteConversation,
     setConversationProvider,
+    appendGeneratedImages,
     removeAttachment,
     exportConversations,
     deleteAllConversations,
@@ -224,6 +228,90 @@ export function WorkspaceLayout() {
    * is what breaks that loop.
    */
   const handleHighlightHandled = useCallback(() => setHighlightMessageId(null), []);
+
+  /**
+   * Project 3: the two explicit generated-image follow-ups.
+   *
+   * These call `/api/images` directly rather than going through the model's
+   * tool call, and that is the correct split: the user has already decided
+   * what they want, so there is nothing for a model to choose. The
+   * model-selected path (Phase 4) is the one in `@/server/images/tool.ts`,
+   * reached by simply asking for an image in the conversation.
+   *
+   * A variation re-sends the ACTUAL source image, not just its prompt, so it
+   * is a variation of that image rather than an unrelated second render of
+   * the same words.
+   */
+  const [imageActionBusy, setImageActionBusy] = useState(false);
+
+  const runImageAction = useCallback(
+    async (image: GeneratedImageRef, operation: "generate" | "variation") => {
+      if (imageActionBusy) return; // guards against a double click
+      setImageActionBusy(true);
+      try {
+        let images: { mimeType: string; data: string }[] = [];
+        if (operation === "variation") {
+          // Fetch the source bytes back. Works for both a stored https URL
+          // and an inline data URL.
+          const response = await fetch(image.url);
+          if (!response.ok) throw new Error("source unavailable");
+          const buffer = await response.arrayBuffer();
+          let binary = "";
+          const bytes = new Uint8Array(buffer);
+          for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+          images = [{ mimeType: image.mediaType, data: btoa(binary) }];
+        }
+
+        const response = await fetch("/api/images", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ prompt: image.prompt, operation, images }),
+        });
+        const payload = (await response.json()) as {
+          images?: { url: string; mediaType: string; persisted: boolean }[];
+          code?: string;
+        };
+        if (!response.ok || !payload.images || payload.images.length === 0) {
+          setImageError(
+            operation === "variation"
+              ? "Could not create a variation of that image."
+              : "Could not regenerate that image.",
+          );
+          return;
+        }
+        setImageError(null);
+        appendGeneratedImages(
+          payload.images.map((generated) => ({
+            url: generated.url,
+            mediaType: generated.mediaType,
+            prompt: image.prompt,
+            model: image.model,
+            operation: operation === "variation" ? ("variation" as const) : ("generate" as const),
+            persisted: generated.persisted,
+          })),
+          operation === "variation" ? "Here is a variation." : "Here it is again.",
+        );
+      } catch {
+        setImageError(
+          operation === "variation"
+            ? "Could not create a variation of that image."
+            : "Could not regenerate that image.",
+        );
+      } finally {
+        setImageActionBusy(false);
+      }
+    },
+    [appendGeneratedImages, imageActionBusy],
+  );
+
+  const handleRegenerateImage = useCallback(
+    (image: GeneratedImageRef) => void runImageAction(image, "generate"),
+    [runImageAction],
+  );
+  const handleImageVariation = useCallback(
+    (image: GeneratedImageRef) => void runImageAction(image, "variation"),
+    [runImageAction],
+  );
 
   // Ask the server which providers are actually configured. Only booleans and
   // model names come back — never a key.
@@ -361,7 +449,9 @@ export function WorkspaceLayout() {
           messages={messages}
           onEditResend={editAndResend}
           onHighlightHandled={handleHighlightHandled}
+          onImageVariation={handleImageVariation}
           onRegenerate={regenerate}
+          onRegenerateImage={handleRegenerateImage}
           onRemoveAttachment={(messageId, attachmentId) => {
             if (activeId) removeAttachment(activeId, messageId, attachmentId);
           }}
@@ -379,6 +469,15 @@ export function WorkspaceLayout() {
           speechVoiceId={speechVoiceId}
           status={status}
         />
+
+        {imageError ? (
+          <p
+            className="mx-auto mt-1 w-full max-w-[var(--content-column)] rounded-lg border border-white/25 bg-white/10 px-3 py-1.5 text-[11px] glass-text-subtle"
+            role="alert"
+          >
+            {imageError}
+          </p>
+        ) : null}
 
         <MessageComposer
           availability={availability}

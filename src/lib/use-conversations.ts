@@ -8,6 +8,7 @@ import {
   type ChatErrorCode,
   type ChatErrorInfo,
   type ChatMessage,
+  type GeneratedImageRef,
   type MessageOutcome,
   type MessageState,
   type MessageVersion,
@@ -701,6 +702,63 @@ export function useConversations(preferences: Preferences) {
                 }));
               }
               schedulePersist();
+            } else if (event.type === "image") {
+              /**
+               * Project 3: an image the model produced by calling the
+               * `generate_image` tool mid-turn.
+               *
+               * It can arrive BEFORE any text (the model often calls the tool
+               * first and comments afterwards), so this branch opens the
+               * assistant message itself rather than assuming `delta` already
+               * did -- otherwise the first image of a turn would be dropped,
+               * or worse, attached to the previous message. `opened` is set
+               * either way, so the settlement logic treats a tool-only turn
+               * as a turn that produced something.
+               */
+              const generated = event.image;
+              if (!opened) {
+                opened = true;
+                patch(conversationId, (c) => ({
+                  ...c,
+                  updatedAt: Date.now(),
+                  messages: regenerate
+                    ? c.messages.map((m) =>
+                        m.id === replyId
+                          ? {
+                              ...m,
+                              content: "",
+                              state: "streaming",
+                              outcome: undefined,
+                              outcomeReason: undefined,
+                              provider: providerId,
+                              images: [generated],
+                            }
+                          : m,
+                      )
+                    : [
+                        ...c.messages,
+                        {
+                          id: replyId,
+                          role: "assistant",
+                          content: "",
+                          state: "streaming",
+                          provider: providerId,
+                          images: [generated],
+                        },
+                      ],
+                }));
+              } else {
+                patch(conversationId, (c) => ({
+                  ...c,
+                  updatedAt: Date.now(),
+                  messages: c.messages.map((m) =>
+                    m.id === replyId
+                      ? { ...m, images: [...(m.images ?? []), generated] }
+                      : m,
+                  ),
+                }));
+              }
+              schedulePersist();
             } else if (event.type === "error") {
               // F2: an explicit mid-stream failure. settleRun() decides
               // whether that means "mark the partial answer interrupted" (if
@@ -1037,6 +1095,40 @@ export function useConversations(preferences: Preferences) {
     setErrorInfo(null);
   }, [abortActiveRun]);
 
+  /**
+   * Project 3: appends an assistant message carrying images that were
+   * produced OUTSIDE a chat turn -- the explicit Regenerate and "Make a
+   * variation" actions, which call `/api/images` directly rather than going
+   * through the model's own tool call.
+   *
+   * Both paths converge on the same persisted shape (`ChatMessage.images`),
+   * so a regenerated or varied image renders, downloads and survives a reload
+   * exactly like one the model generated itself.
+   */
+  const appendGeneratedImages = useCallback(
+    (images: readonly GeneratedImageRef[], text: string) => {
+      const id = activeIdRef.current;
+      if (!id || images.length === 0) return;
+      patch(id, (c) => ({
+        ...c,
+        updatedAt: Date.now(),
+        messages: [
+          ...c.messages,
+          {
+            id: newId("msg"),
+            role: "assistant" as const,
+            content: text,
+            state: "complete" as const,
+            outcome: "complete" as const,
+            images: [...images],
+          },
+        ],
+      }));
+      schedulePersist();
+    },
+    [patch, schedulePersist],
+  );
+
   const renameConversation = useCallback(
     (id: string, title: string) => {
       const clean = title.replace(/\s+/g, " ").trim().slice(0, 80);
@@ -1186,6 +1278,7 @@ export function useConversations(preferences: Preferences) {
     renameConversation,
     deleteConversation,
     setConversationProvider,
+    appendGeneratedImages,
     removeAttachment,
     exportConversations,
     deleteAllConversations,

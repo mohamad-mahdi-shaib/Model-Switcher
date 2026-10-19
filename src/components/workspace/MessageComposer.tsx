@@ -19,7 +19,7 @@ import {
 import { deleteAttachmentsBytes } from "@/lib/attachment-storage";
 import { ProviderSwitcher } from "@/components/workspace/ProviderMenu";
 import { newId, type AttachmentMeta } from "@/lib/chat";
-import type { AvailabilityMap, ProviderId } from "@/lib/providers";
+import { getProviderMeta, type AvailabilityMap, type ProviderId } from "@/lib/providers";
 import type { ChatStatus, SendResult } from "@/lib/use-conversations";
 
 export type ComposerHandle = {
@@ -250,7 +250,24 @@ export function MessageComposer({
     : conversationFull
       ? draftRejectionMessage({ ok: false, reason: "conversationFull", limit: MAX_MESSAGES })
       : null;
-  const notice = capNotice ?? rejection ?? attachmentErrorMessage;
+  /**
+   * Project 3, Phase 5: the selected model cannot read images, and the user
+   * has staged one anyway.
+   *
+   * Warn, never silently drop. The send is NOT blocked -- the user may well
+   * want the text answered regardless -- and the server keeps the same
+   * promise from its side: `toModelMessages()` replaces an unreadable
+   * attachment with an explicit note rather than deleting it, so neither the
+   * model nor the transcript pretends the image was never attached.
+   */
+  const meta = getProviderMeta(provider);
+  const stagedImages = attachments.filter((a) => a.kind === "image").length;
+  const visionNotice =
+    stagedImages > 0 && !meta.vision
+      ? `${meta.label} cannot read images. Your ${stagedImages === 1 ? "image" : "images"} will be named in the message but not analysed — switch to a vision model to have ${stagedImages === 1 ? "it" : "them"} read.`
+      : null;
+
+  const notice = capNotice ?? rejection ?? attachmentErrorMessage ?? visionNotice;
   const blocked = conversationFull || hasOversizedHistoryMessage;
 
   return (
