@@ -30,6 +30,14 @@ substitution the requirement forbids.
 
 **No blockers remain.** Everything below is live-verified against production.
 
+### Storage smoke tests — deployment `model-switcher-j73tkyehz`
+
+With Vercel Blob connected, all four generation paths store rather than
+inline: text-to-image, the tool-called image, edit and variation each returned
+`persisted: true` with a `*.public.blob.vercel-storage.com` URL, and a stored
+URL re-fetched independently as a 1,248 KB PNG. `/api/images` reports
+`storage: "blob"`.
+
 ### Production smoke tests — 2026-10-20, deployment `model-switcher-kgxallset`
 
 All 19 checks passed against https://model-switcher.vercel.app:
@@ -141,7 +149,7 @@ generation goes through `chat()`, not `imageModel()`.
 | Model-selected tool calling | **VERIFIED** | live: "draw me a lighthouse at sunset" → model called the tool → image in the conversation; "what is 2+2" → 0 images |
 | Context preserved across model switches | **VERIFIED** | pre-existing behaviour + new unit tests for serialisation order |
 | Unsupported capability handled explicitly | **VERIFIED** | `toModelMessages` tests + composer warning |
-| Storage | **PARTIAL** | Blob integration written and exercised via its fallback; no `BLOB_READ_WRITE_TOKEN` set, so images are inline-only and labelled "not stored" |
+| Storage | **VERIFIED** | Vercel Blob store `model-switcher-images` connected; live on production: text-to-image, tool-called, edit and variation all return `persisted: true` with an https Blob URL that re-fetches as a valid PNG |
 | Keys server-side only | **VERIFIED** | no `process.env` outside `src/server`; no key names in `.next/static` |
 
 ---
@@ -166,12 +174,10 @@ generation goes through `chat()`, not `imageModel()`.
 
 ## Remaining work
 
-1. **Optional:** add a Vercel Blob store (`BLOB_READ_WRITE_TOKEN`) so generated
-   images get durable https URLs instead of living inline in one browser.
-2. **Optional:** add `OPENROUTER_API_KEY` to the Preview environment as well —
+1. **Optional:** add `OPENROUTER_API_KEY` to the Preview environment as well —
    it is currently Production-only, so preview deployments report the
    OpenRouter model and image generation as not configured.
-3. **Optional:** connect the GitHub repo to the Vercel project so pushes deploy
+2. **Optional:** connect the GitHub repo to the Vercel project so pushes deploy
    automatically; deployments are CLI-driven today.
 
 No functional work is outstanding. Every Project 3 requirement is verified
