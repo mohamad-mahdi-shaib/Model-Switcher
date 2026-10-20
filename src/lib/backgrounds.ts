@@ -99,7 +99,11 @@ const MIGRATED_BACKGROUND_IDS: Record<string, BackgroundId> = {
 
 export function migrateBackgroundId(id: string | undefined | null): BackgroundId {
   if (BACKGROUNDS.some((b) => b.id === id)) return id as BackgroundId;
-  if (typeof id === "string" && id in MIGRATED_BACKGROUND_IDS) {
+  // `Object.hasOwn`, never `in` -- see `migrateProviderId`'s own note: an
+  // `in` check matches "__proto__" and returns an inherited value rather
+  // than a BackgroundId. Pre-existing here; fixed alongside the identical
+  // bug in the provider migration, since both read a persisted string.
+  if (typeof id === "string" && Object.hasOwn(MIGRATED_BACKGROUND_IDS, id)) {
     return MIGRATED_BACKGROUND_IDS[id];
   }
   return DEFAULT_BACKGROUND;

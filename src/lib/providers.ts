@@ -17,16 +17,12 @@
  */
 
 /**
- * Project 3 added three OpenRouter-backed models. Existing ids are untouched,
- * so every saved conversation keeps loading exactly as before -- `providerId`
- * is a persisted value (see `storage.ts`) as well as a wire value.
+ * Project 3 added OpenRouter-backed models; the catalogue-simplification pass
+ * then reduced them to one. `providerId` is a persisted value (see
+ * `storage.ts`) as well as a wire value, so removed ids are migrated rather
+ * than left dangling -- see `migrateProviderId` below.
  */
-export type ProviderId =
-  | "gemini"
-  | "gpt"
-  | "or-claude"
-  | "or-qwen"
-  | "or-deepseek";
+export type ProviderId = "gemini" | "gpt" | "or-deepseek";
 
 export type Provider = {
   id: ProviderId;
@@ -63,23 +59,21 @@ export const PROVIDERS: readonly Provider[] = [
     accent: "#4f8c72",
     vision: true,
   },
-  // --- Project 3: reached through OpenRouter, one key for all three. ---
-  {
-    id: "or-claude",
-    label: "Claude Sonnet 4.5",
-    enabled: true,
-    note: "Not connected — no OPENROUTER_API_KEY configured on the server.",
-    accent: "#a8764e",
-    vision: true,
-  },
-  {
-    id: "or-qwen",
-    label: "Qwen2.5-VL 72B",
-    enabled: true,
-    note: "Not connected — no OPENROUTER_API_KEY configured on the server.",
-    accent: "#7c6fae",
-    vision: true,
-  },
+  /*
+   * Project 3, reached through OpenRouter. Claude Sonnet 4.5 and Qwen2.5-VL
+   * 72B were removed in the catalogue-simplification pass: Gemini and OpenAI
+   * were both live-verified for image description, OCR and multi-image
+   * comparison, which made a third and fourth vision model redundant, and
+   * Qwen had stopped responding for this account on any request at all
+   * (plain text included).
+   *
+   * DeepSeek stays, and it is NOT redundant: `openrouter.ts` is the only
+   * adapter that offers the `generate_image` tool, so this entry is what
+   * keeps model-SELECTED image generation working. Removing it would leave
+   * generation reachable only by an explicit button, which is exactly what
+   * the requirement rules out. It is also the text-only model, so it is what
+   * keeps the capability gate a reachable path.
+   */
   {
     id: "or-deepseek",
     label: "DeepSeek V3.1",
@@ -91,6 +85,38 @@ export const PROVIDERS: readonly Provider[] = [
     vision: false,
   },
 ];
+
+/**
+ * Resolves a persisted `providerId` that no longer exists.
+ *
+ * A conversation saved while Claude Sonnet 4.5 or Qwen2.5-VL was selectable
+ * still carries that id. Without this it would fall through
+ * `getProviderMeta`'s `?? PROVIDERS[0]` and silently *display* as Gemini
+ * while the stored value stayed invalid -- so a later send would post an
+ * unregistered provider and be rejected. Both removed models were vision
+ * models, so both migrate to Gemini, the direct vision integration that
+ * replaced them.
+ *
+ * Same discipline as `migrateBackgroundId`: every id this app has ever
+ * persisted resolves to a real current one.
+ */
+const MIGRATED_PROVIDER_IDS: Record<string, ProviderId> = {
+  "or-claude": "gemini",
+  "or-qwen": "gemini",
+};
+
+export function migrateProviderId(id: string | undefined | null): ProviderId {
+  if (PROVIDERS.some((p) => p.id === id)) return id as ProviderId;
+  // `Object.hasOwn`, never `in`: `"__proto__" in {}` is TRUE, so an `in`
+  // check would match a saved id of "__proto__"/"constructor" and return an
+  // inherited value from Object.prototype instead of a ProviderId. The same
+  // trap `registry.ts` documents for its own lookup -- caught here by the
+  // malformed-id test rather than in production.
+  if (typeof id === "string" && Object.hasOwn(MIGRATED_PROVIDER_IDS, id)) {
+    return MIGRATED_PROVIDER_IDS[id];
+  }
+  return DEFAULT_PROVIDER;
+}
 
 export const DEFAULT_PROVIDER: ProviderId = "gemini";
 export const UNAVAILABLE_LABEL = "Coming soon";

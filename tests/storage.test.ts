@@ -38,6 +38,68 @@ const conv = (id: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
+/**
+ * Catalogue-simplification pass: a conversation saved while Claude Sonnet 4.5
+ * or Qwen2.5-VL was selectable must still load, keep every message and every
+ * image attachment, and come back pointing at a model that actually exists --
+ * not merely *display* as one while the stored id stays invalid.
+ */
+test("a conversation saved with a removed model id loads with that id migrated", () => {
+  fake.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      activeId: "a",
+      conversations: [conv("a", { providerId: "or-claude" }), conv("b", { providerId: "or-qwen" })],
+    }),
+  );
+  const { state, status } = loadConversations();
+  assert.equal(status, "ok");
+  assert.equal(state?.conversations[0].providerId, "gemini");
+  assert.equal(state?.conversations[1].providerId, "gemini");
+});
+
+test("migrating the provider id preserves messages and image attachments", () => {
+  const withImage = conv("a", {
+    providerId: "or-qwen",
+    messages: [
+      {
+        id: "a-u",
+        role: "user" as const,
+        content: "what is in this?",
+        state: "complete" as const,
+        attachments: [
+          { id: "att1", name: "shot.png", mimeType: "image/png", kind: "image" as const, size: 1234 },
+        ],
+      },
+      { id: "a-a", role: "assistant" as const, content: "a screenshot", state: "complete" as const },
+    ],
+  });
+  fake.setItem(STORAGE_KEY, JSON.stringify({ version: 1, activeId: "a", conversations: [withImage] }));
+
+  const { state } = loadConversations();
+  const restored = state?.conversations[0];
+  assert.equal(restored?.providerId, "gemini", "the dead id must not survive");
+  assert.equal(restored?.messages.length, 2, "no message may be lost to the migration");
+  assert.equal(restored?.messages[0].attachments?.length, 1, "the image attachment must survive");
+  assert.equal(restored?.messages[0].attachments?.[0].name, "shot.png");
+  assert.equal(restored?.messages[1].content, "a screenshot");
+});
+
+test("a conversation on a still-current model is untouched by the migration", () => {
+  fake.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      activeId: "a",
+      conversations: [conv("a", { providerId: "or-deepseek" }), conv("b", { providerId: "gpt" })],
+    }),
+  );
+  const { state } = loadConversations();
+  assert.equal(state?.conversations[0].providerId, "or-deepseek");
+  assert.equal(state?.conversations[1].providerId, "gpt");
+});
+
 test("round-trips conversations and the active id", () => {
   const status = saveConversations([conv("a"), conv("b")], "b");
   assert.equal(status, "ok");

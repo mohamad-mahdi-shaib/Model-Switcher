@@ -1,25 +1,34 @@
 /**
  * Project 3: the OpenRouter model catalogue.
  *
- * Every id and every capability flag in this file was read from OpenRouter's
- * own public model catalogue (`GET https://openrouter.ai/api/v1/models`, 470
- * models at the time of writing) rather than recalled or inferred from a
- * display name. The `input_modalities` / `output_modalities` recorded there
- * are what `vision` and `imageOutput` below mean:
+ * Every id and capability flag here was read from OpenRouter's own public
+ * catalogue (`GET https://openrouter.ai/api/v1/models`) rather than recalled
+ * or inferred from a display name. `input_modalities`/`output_modalities`
+ * recorded there are what `vision` and `imageOutput` mean:
  *
- *   anthropic/claude-sonnet-4.5       in: text,image,file   out: text
- *   qwen/qwen2.5-vl-72b-instruct      in: text,image        out: text
  *   deepseek/deepseek-chat-v3.1       in: text              out: text
  *   google/gemini-2.5-flash-image     in: text,image        out: text,image
  *
- * The two vision models are deliberately from different vendors and model
- * families -- Anthropic's Claude Sonnet 4.5 and Alibaba's Qwen2.5-VL-72B --
- * so "two distinct vision models" means two genuinely different models, not
- * one model under two display names.
+ * CATALOGUE-SIMPLIFICATION PASS. This list used to carry two OpenRouter
+ * vision models as well -- `anthropic/claude-sonnet-4.5` and
+ * `qwen/qwen2.5-vl-72b-instruct`. Both are gone:
  *
- * The text-only model is here on purpose too: it is what makes the
- * capability gating in `serializeForModel()` a real, exercisable path rather
- * than dead code, since every other model this app registers accepts images.
+ * - Qwen stopped answering for this account entirely. Confirmed live against
+ *   production: even a plain text request ("reply with just: ok") returned an
+ *   error, so it was not an image-input problem. A model that cannot answer
+ *   is worse than no entry.
+ * - Claude was removed as redundant, not as broken. The two DIRECT
+ *   integrations were live-verified on production for image description, OCR
+ *   and two-image comparison -- `gemini-3.6-flash` through `@google/genai`
+ *   and `gpt-5.6-luna` through the OpenAI Responses API -- which covers the
+ *   vision requirement without a third vendor or a third key path.
+ *
+ * DeepSeek remains, and deliberately so. `openrouter.ts` is the ONLY adapter
+ * that offers the `generate_image` tool (the direct Gemini and OpenAI
+ * adapters have no tool wiring at all), so this entry is what keeps
+ * model-SELECTED image generation alive. It is also the text-only model,
+ * which keeps the capability gate in `toModelMessages()` an exercisable path
+ * rather than dead code.
  */
 
 import type { ProviderId } from "@/lib/providers";
@@ -45,18 +54,6 @@ export type OpenRouterModel = {
  * renders them in.
  */
 export const OPENROUTER_CHAT_MODELS: readonly OpenRouterModel[] = [
-  {
-    id: "or-claude",
-    openrouterId: "anthropic/claude-sonnet-4.5",
-    label: "Claude Sonnet 4.5",
-    capabilities: { vision: true, imageOutput: false },
-  },
-  {
-    id: "or-qwen",
-    openrouterId: "qwen/qwen2.5-vl-72b-instruct",
-    label: "Qwen2.5-VL 72B",
-    capabilities: { vision: true, imageOutput: false },
-  },
   {
     id: "or-deepseek",
     openrouterId: "deepseek/deepseek-chat-v3.1",

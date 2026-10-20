@@ -257,9 +257,10 @@ export const ERROR_COPY: Record<ChatErrorCode, string> = {
 const KEY_NAME: Record<string, string> = {
   gemini: "GEMINI_API_KEY",
   gpt: "OPENAI_API_KEY",
-  // Project 3: every OpenRouter-backed model shares one key.
-  "or-claude": "OPENROUTER_API_KEY",
-  "or-qwen": "OPENROUTER_API_KEY",
+  // Project 3: the OpenRouter-backed model (and image generation) share one
+  // key. Entries for the removed Claude/Qwen ids went with them -- a saved
+  // conversation carrying one is migrated by `migrateProviderId`, so nothing
+  // ever looks the old ids up here.
   "or-deepseek": "OPENROUTER_API_KEY",
 };
 

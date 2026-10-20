@@ -1,6 +1,6 @@
 "use client";
 
-import type { ProviderId } from "@/lib/providers";
+import { migrateProviderId, type ProviderId } from "@/lib/providers";
 import type { ChatMessage } from "@/lib/chat";
 export type { MessageState } from "@/lib/chat";
 
@@ -227,6 +227,19 @@ export function loadConversations(): LoadResult {
   }
 
   const conversations = obj.conversations as Conversation[];
+
+  /**
+   * Catalogue-simplification pass: a conversation saved while Claude Sonnet
+   * 4.5 or Qwen2.5-VL was selectable still carries that `providerId`.
+   * Migrated on load, not merely tolerated: `getProviderMeta` would fall back
+   * to the first provider for DISPLAY, but the stored value would stay
+   * invalid, so the next send would post an unregistered provider id and be
+   * rejected by the route. Same discipline as `migrateBackgroundId`.
+   */
+  for (const c of conversations) {
+    c.providerId = migrateProviderId(c.providerId);
+  }
+
   // A reply cut off by a refresh must come back as interrupted, never as
   // still-streaming (which would show a live caret that never resolves) and
   // never silently as complete. F2: it also gets an honest outcome -- the tab

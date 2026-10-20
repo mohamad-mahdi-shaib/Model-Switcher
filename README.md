@@ -38,7 +38,7 @@ Everything listed here is implemented and reachable in the running app.
 - Upload by file picker, drag-and-drop or clipboard paste; preview and remove
   before sending; up to 3 attachments per message.
 - Image understanding — description, visual analysis, questions, OCR and
-  multi-image comparison — on four vision models from four vendors.
+  multi-image comparison — on both direct integrations, Gemini and OpenAI.
 - Image generation from a text prompt, from a reference image, and editing or
   varying an existing image (`src/server/images/generate.ts`).
 - The chat model calls the image tool itself when a request needs a picture
@@ -46,8 +46,8 @@ Everything listed here is implemented and reachable in the running app.
 - Download, Regenerate and Make a variation on every generated image.
 
 **Providers**
-- Five models behind one provider-neutral endpoint: Gemini and OpenAI direct,
-  plus Claude Sonnet 4.5, Qwen2.5-VL 72B and DeepSeek V3.1 through OpenRouter.
+- Three models behind one provider-neutral endpoint: Gemini and OpenAI
+  called directly with their own keys, plus DeepSeek V3.1 through OpenRouter.
   A model is offered only when an adapter exists and the server reports its
   key present.
 - Switching mid-conversation asks for confirmation (every later message sends
@@ -117,7 +117,7 @@ variables in the running process.
 | `GEMINI_MODEL` | no | Defaults to `gemini-3.6-flash` (stable, free tier). |
 | `OPENAI_API_KEY` | for OpenAI | Server-side OpenAI credential. Requires a funded account. |
 | `OPENAI_MODEL` | no | Defaults to `gpt-5.6-luna`, the cost-optimised tier. See "Which OpenAI model" below before overriding it. |
-| `OPENROUTER_API_KEY` | for the OpenRouter models and all image generation | One key serves Claude Sonnet 4.5, Qwen2.5-VL 72B, DeepSeek V3.1 and the image model. Create one at <https://openrouter.ai/keys>. |
+| `OPENROUTER_API_KEY` | for DeepSeek V3.1 and all image generation | One key serves the OpenRouter chat model and the image model. Create one at <https://openrouter.ai/keys>; it needs credit, as no image-generation model is free. |
 | `OPENROUTER_IMAGE_MODEL` | no | Defaults to `google/gemini-2.5-flash-image`. |
 | `OPENROUTER_SITE_URL` / `OPENROUTER_SITE_NAME` | no | Optional attribution headers for OpenRouter's public rankings. Not secrets. |
 | `BLOB_READ_WRITE_TOKEN` | no | Vercel Blob. When set, generated images are stored and the conversation keeps a short URL instead of inline base64. Without it the app still works; images live in the browser only. |
@@ -444,17 +444,28 @@ Every id and capability below was read from OpenRouter's own catalogue
 
 | Model | Reached via | Image input | Image output |
 | --- | --- | --- | --- |
-| `gemini-3.6-flash` | Google direct (`@google/genai`) | yes | no |
-| `gpt-5.6-luna` | OpenAI direct (Responses API) | yes | no |
-| `anthropic/claude-sonnet-4.5` | OpenRouter | yes | no |
-| `qwen/qwen2.5-vl-72b-instruct` | OpenRouter | yes | no |
-| `deepseek/deepseek-chat-v3.1` | OpenRouter | **no** (text only) | no |
+| `gemini-3.6-flash` | Google direct (`@google/genai`) | **yes** | no |
+| `gpt-5.6-luna` | OpenAI direct (Responses API) | **yes** | no |
+| `deepseek/deepseek-chat-v3.1` | OpenRouter | no (text only) | no |
 | `google/gemini-2.5-flash-image` | OpenRouter (generation only) | yes | **yes** |
 
-The two OpenRouter vision models are deliberately from different vendors, so
-"two distinct vision models" means two genuinely different models rather than
-one model under two names. DeepSeek V3.1 is registered precisely *because* it
-is text-only: it makes the capability gate below a real, reachable path.
+**The two vision models are the two direct integrations.** Both were verified
+on production against a real screenshot for image description, OCR and
+two-image comparison — different vendors, different APIs, different keys, so
+"two distinct vision models" means two genuinely independent ones.
+
+An earlier revision also offered Claude Sonnet 4.5 and Qwen2.5-VL 72B through
+OpenRouter. Both were removed: Qwen had stopped answering for this account on
+any request at all (plain text included), and Claude became redundant once the
+direct integrations were verified for vision. A conversation saved while
+either was selected is migrated to Gemini on load (`migrateProviderId`), so no
+saved conversation is left pointing at a model that no longer exists.
+
+DeepSeek V3.1 is registered for a specific structural reason: the OpenRouter
+adapter is the **only** one that attaches the `generate_image` tool, so it is
+what keeps model-*selected* image generation working rather than
+button-only. It is also the text-only model, which keeps the capability gate
+below a reachable path instead of dead code.
 
 ### How image understanding works
 
@@ -579,13 +590,16 @@ time, so an existing deployment keeps the values it was built with.
 - **Free-tier quota.** `gemini-3.6-flash` allows 20 requests/day per project on
   the free tier. When exhausted the UI reports the limit, scope and Google's own
   retry delay.
-- **The OpenRouter features are not live-verified.** The integration is
-  written against the installed SDKs and OpenRouter's published catalogue, and
-  its decidable parts are unit-tested, but no request has been made with a real
-  `OPENROUTER_API_KEY`: the key is not configured locally or in the Vercel
-  project. Until it is, image understanding on the two OpenRouter vision
-  models, image generation, and the model-selected tool call remain
-  **implemented but unverified**. See `PROJECT3_PROGRESS.md`.
+- **Image generation costs money.** No OpenRouter model emits images for
+  free — 17 `:free` models exist and none of them have image output — so
+  `OPENROUTER_API_KEY` must belong to an account with credit. Without credit
+  the app reports `INSUFFICIENT_CREDIT` honestly rather than failing obscurely.
+- **`OPENROUTER_API_KEY` is set for Production only** in the Vercel project,
+  so preview deployments report the OpenRouter model and image generation as
+  not configured. Add it to Preview as well if you need it there.
+- **Generated images are not persisted server-side by default.** Without
+  `BLOB_READ_WRITE_TOKEN` they are returned inline and live only in that
+  browser's conversation; the UI labels them "not stored".
 - **One image per turn.** The tool refuses a second generation inside the same
   message, deliberately, as a cost guard.
 - **Reference images come from the current turn.** The tool can edit or vary an

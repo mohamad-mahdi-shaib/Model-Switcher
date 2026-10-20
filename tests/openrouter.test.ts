@@ -1,9 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { classifyOpenRouterError, toModelMessages } from "@/server/providers/openrouter";
-import { OPENROUTER_CHAT_MODELS, findOpenRouterModel, IMAGE_CAPABLE_MODELS, DEFAULT_IMAGE_MODEL } from "@/lib/models";
-import { PROVIDERS } from "@/lib/providers";
+import {
+  OPENROUTER_CHAT_MODELS,
+  findOpenRouterModel,
+  isOpenRouterModelId,
+  IMAGE_CAPABLE_MODELS,
+  DEFAULT_IMAGE_MODEL,
+} from "@/lib/models";
+import { DEFAULT_PROVIDER, migrateProviderId, PROVIDERS } from "@/lib/providers";
 import type { WireMessage } from "@/lib/chat";
+import { migrateBackgroundId } from "@/lib/backgrounds";
 
 /**
  * Project 3 unit tests for the pure, provider-independent logic:
@@ -198,17 +205,91 @@ test("every catalogue model is offered by the selector, with matching capabiliti
   }
 });
 
-test("at least two DISTINCT vision models are configured", () => {
-  const vision = OPENROUTER_CHAT_MODELS.filter((m) => m.capabilities.vision);
-  assert.ok(vision.length >= 2, "Project 3 requires two vision-capable models");
-  const openrouterIds = new Set(vision.map((m) => m.openrouterId));
-  assert.equal(openrouterIds.size, vision.length, "two entries point at the same model id");
-  const vendors = new Set(vision.map((m) => m.openrouterId.split("/")[0]));
-  assert.ok(vendors.size >= 2, "the two vision models must not be from one vendor");
+/**
+ * Catalogue-simplification pass. The requirement is still "at least two
+ * distinct vision-capable models the user can select" -- what changed is
+ * WHERE they come from: the two direct integrations rather than two extra
+ * OpenRouter entries. This asserts the requirement against the selector the
+ * user actually sees, which is the thing that has to hold.
+ */
+test("at least two DISTINCT vision models are selectable", () => {
+  const vision = PROVIDERS.filter((p) => p.vision && p.enabled);
+  assert.ok(vision.length >= 2, "two vision-capable models must be selectable");
+  const ids = new Set(vision.map((p) => p.id));
+  assert.equal(ids.size, vision.length, "two entries share an id");
+});
+
+test("the two vision models are the direct Gemini and OpenAI integrations", () => {
+  const vision = PROVIDERS.filter((p) => p.vision && p.enabled).map((p) => p.id);
+  assert.ok(vision.includes("gemini"), "Gemini must remain a selectable vision model");
+  assert.ok(vision.includes("gpt"), "OpenAI must remain a selectable vision model");
+});
+
+test("the removed models are no longer selectable anywhere", () => {
+  for (const removed of ["or-claude", "or-qwen"]) {
+    assert.equal(
+      PROVIDERS.some((p) => p.id === removed),
+      false,
+      `${removed} is still in the selector`,
+    );
+    assert.equal(findOpenRouterModel(removed), null, `${removed} is still in the catalogue`);
+    assert.equal(isOpenRouterModelId(removed), false);
+  }
 });
 
 test("a text-only model is configured, so the capability gate is reachable", () => {
   assert.ok(OPENROUTER_CHAT_MODELS.some((m) => !m.capabilities.vision));
+});
+
+/**
+ * `openrouter.ts` is the only adapter that attaches the `generate_image`
+ * tool, so at least one OpenRouter chat model has to stay registered or
+ * model-SELECTED generation silently becomes button-only -- the exact
+ * substitution the requirement forbids. This is the unit-level guard; the
+ * live proof is the production smoke test recorded in PROJECT3_PROGRESS.md.
+ */
+test("an OpenRouter chat model remains registered to host the image tool", () => {
+  assert.ok(
+    OPENROUTER_CHAT_MODELS.length >= 1,
+    "removing every OpenRouter chat model would remove model-selected tool calling",
+  );
+  const listed = OPENROUTER_CHAT_MODELS.every((m) => PROVIDERS.some((p) => p.id === m.id));
+  assert.ok(listed, "a catalogue model is not offered in the selector");
+});
+
+test("DeepSeek specifically is the retained tool host", () => {
+  const deepseek = findOpenRouterModel("or-deepseek");
+  assert.ok(deepseek, "or-deepseek must stay registered");
+  assert.equal(deepseek.openrouterId, "deepseek/deepseek-chat-v3.1");
+  assert.equal(deepseek.capabilities.vision, false);
+});
+
+/* ------------------------------------------- persisted provider migration */
+
+test("a conversation saved with a removed model id migrates to a real one", () => {
+  assert.equal(migrateProviderId("or-claude"), "gemini");
+  assert.equal(migrateProviderId("or-qwen"), "gemini");
+});
+
+test("current ids pass through migration unchanged", () => {
+  for (const id of ["gemini", "gpt", "or-deepseek"] as const) {
+    assert.equal(migrateProviderId(id), id);
+  }
+});
+
+test("the background migration shares the same prototype-safety guard", () => {
+  // Same class of bug, same fix: a persisted string must never resolve to an
+  // inherited Object.prototype value.
+  assert.equal(migrateBackgroundId("__proto__"), "pearl");
+  assert.equal(migrateBackgroundId("constructor"), "pearl");
+  assert.equal(migrateBackgroundId("obsidian"), "aurora");
+});
+
+test("an unknown or malformed provider id falls back to the default", () => {
+  assert.equal(migrateProviderId("nonsense"), DEFAULT_PROVIDER);
+  assert.equal(migrateProviderId(undefined), DEFAULT_PROVIDER);
+  assert.equal(migrateProviderId(null), DEFAULT_PROVIDER);
+  assert.equal(migrateProviderId("__proto__"), DEFAULT_PROVIDER);
 });
 
 test("the default image model is one of the image-capable models", () => {
@@ -216,7 +297,9 @@ test("the default image model is one of the image-capable models", () => {
 });
 
 test("findOpenRouterModel resolves only real ids", () => {
-  assert.ok(findOpenRouterModel("or-claude"));
+  assert.ok(findOpenRouterModel("or-deepseek"));
+  // A direct integration is not an OpenRouter model.
   assert.equal(findOpenRouterModel("gemini"), null);
+  assert.equal(findOpenRouterModel("gpt"), null);
   assert.equal(findOpenRouterModel("__proto__"), null);
 });

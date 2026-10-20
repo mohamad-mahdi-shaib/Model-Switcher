@@ -9,59 +9,61 @@ it are a further commit on top.
 
 ---
 
-## The one blocker
+## Final architecture (catalogue-simplification pass)
 
-`OPENROUTER_API_KEY` **is now configured** in the Vercel project (Production)
-and the integration is live. The remaining blocker is **billing**: the
-OpenRouter account has **no credit**, so every paid model returns HTTP 402.
+| Slot | Model | Transport | Role |
+| --- | --- | --- | --- |
+| Gemini | `gemini-3.6-flash` | direct, `@google/genai` | text **+ vision** |
+| OpenAI | `gpt-5.6-luna` | direct, Responses API | text **+ vision** |
+| DeepSeek V3.1 | `deepseek/deepseek-chat-v3.1` | OpenRouter | text-only; **hosts the `generate_image` tool** |
+| Image generation | `google/gemini-2.5-flash-image` | OpenRouter | text-to-image, reference, edit, variation |
 
-What that does and does not block:
+Removed: `anthropic/claude-sonnet-4.5` (redundant once both direct
+integrations were verified for vision) and `qwen/qwen2.5-vl-72b-instruct`
+(stopped answering for this account on *any* request, plain text included).
+Saved conversations on either id migrate to Gemini via `migrateProviderId`.
 
-- **Not blocked** — the integration itself is proven live. A free model
-  (`deepseek/deepseek-chat-v3.1`) answers in production, streams, preserves
-  history, and the capability gate works.
-- **Blocked** — the two vision models, image generation, and the final step
-  of the tool call, all of which are paid.
+DeepSeek is retained for a structural reason, not as filler: `openrouter.ts`
+is the only adapter that attaches the image tool, so removing every OpenRouter
+chat model would have reduced image generation to a button — the exact
+substitution the requirement forbids.
 
-**Action needed:** add credit at <https://openrouter.ai/credits>, then re-run
-`scratchpad/live-verify.py`. Nothing else is outstanding for those rows.
+**No blockers remain.** Everything below is live-verified against production.
 
-### Live run, 2026-10-20, against https://model-switcher.vercel.app
+### Production smoke tests — 2026-10-20, deployment `model-switcher-kgxallset`
+
+All 19 checks passed against https://model-switcher.vercel.app:
 
 | Check | Result |
 | --- | --- |
-| `/api/chat` reports all 5 models configured | PASS |
-| `/api/images` reports configured | PASS |
-| Free model answers a plain question | PASS — replied "4" |
-| Plain question does NOT generate an image | PASS — 0 images |
-| History preserved into an OpenRouter model | PASS — recalled "73" |
-| Streaming ends with a confirmed outcome | PASS — `outcome=complete` |
-| Capability gate on the text-only model | PASS — model said it cannot analyse the image; no image part was sent |
-| **The model CALLED the image tool** | **PASS (partial)** — the model answered *"Yes, I can generate images for you. I apologize — it appears that the image generation service is currently unavailable due to a credit issue."* That is the tool being selected, executed server-side, hitting the 402 and relaying it. Everything but the image itself is proven. |
-| Vision on Claude Sonnet 4.5 / Qwen2.5-VL | BLOCKED — 402 |
-| Text-to-image / reference / edit / variation | BLOCKED — 402 |
-| Validation refuses an edit with no source image | PASS — 400, pre-provider |
+| Selector offers exactly `gemini`, `gpt`, `or-deepseek`; all configured | PASS |
+| Claude and Qwen no longer selectable | PASS |
+| Vision — Gemini / OpenAI | PASS / PASS |
+| OCR — Gemini / OpenAI | PASS / PASS |
+| Two-image comparison — Gemini / OpenAI | PASS / PASS |
+| **Normal chat request → model invoked image generation (no mode switch)** | **PASS** — 1 image, `op=generate`, `google/gemini-2.5-flash-image` |
+| Plain question did NOT invoke generation | PASS — 0 images, replied "4" |
+| Capability gate on the text-only model | PASS |
+| Text-to-image / edit / variation / download | PASS / PASS / PASS / PASS |
+| Conversation history across all three models | PASS — all recalled "51" |
 
-### Two real bugs the live run found and fixed
+### Earlier live findings (kept for the record)
 
-1. **Billing errors were mis-reported in the chat path.** A 402 through
-   `/api/images` carried its status, but the same failure through `streamText`
-   arrived *wrapped*, so a top-level status read missed it and every billing
-   failure surfaced as a generic `UPSTREAM` "could not reach the provider" —
-   the opposite advice to the truth. `classifyOpenRouterError` now walks the
-   `cause` / `lastError` / `errors[]` chain and matches OpenRouter's credit
-   wording. Confirmed fixed live: Claude Sonnet 4.5 now returns
-   `INSUFFICIENT_CREDIT`. Seven regression tests added.
-2. **A failed request could end silently.** `streamText` reports a request
-   failure as an `error` *part* rather than by throwing, so iterating
-   `textStream` alone ended the turn with no text and no explanation. The
-   adapter now reads `fullStream` and classifies the error part.
+Two real bugs were found by live testing and fixed before this pass:
 
-Still imperfect: `qwen/qwen2.5-vl-72b-instruct` returns an error whose shape
-carries no recognisable status or credit wording, so it falls back to
-`UPSTREAM`. That is the correct conservative behaviour for an unrecognised
-failure, but it is less specific than it could be — worth re-checking once
-there is credit, when the request should simply succeed.
+1. A 402 arriving through `streamText` reached the classifier *wrapped*, so
+   billing failures were reported as generic `UPSTREAM` — the opposite advice.
+   `classifyOpenRouterError` now walks the `cause`/`lastError`/`errors[]`
+   chain and matches OpenRouter's credit wording.
+2. `streamText` reports a failed request as an `error` *part* rather than
+   throwing, so a failed turn ended silently with no text. The adapter now
+   reads `fullStream`.
+
+A third was found by a test written during this pass: both
+`migrateProviderId` and the pre-existing `migrateBackgroundId` used
+`id in MAP`, and `"__proto__" in {}` is `true` — so a persisted id of
+`__proto__` resolved to an inherited `Object.prototype` value instead of a
+valid id. Both now use `Object.hasOwn`.
 
 ## Phase 1 — Audit (complete)
 
@@ -130,16 +132,16 @@ generation goes through `chat()`, not `imageModel()`.
 | Upload: picker, drag-drop, paste, preview, remove, multiple | **VERIFIED** | pre-existing; 274 browser checks still pass |
 | Validation + clear errors | **VERIFIED** | unit tests + `images-route` suite |
 | Image understanding, Gemini + OpenAI | **VERIFIED** | pre-existing, previously live-verified |
-| Two distinct OpenRouter vision models | **BLOCKED** | implemented; key live, both return 402 (no credit) |
-| OCR / image questions / comparison | **PARTIAL** | transport supports it (3 attachments, multi-image parts); no live run recorded |
-| Text-to-image | **BLOCKED** | implemented; 402 (no credit) |
-| Reference-image generation | **BLOCKED** | implemented; 402 (no credit) |
-| Editing / variations / regenerate | **BLOCKED** | implemented; 402 (no credit) |
-| Download | **PARTIAL** | implemented via fetch→Blob→object URL (works for data: and cross-origin); no generated image yet to download live |
-| Model-selected tool calling | **PARTIAL** | live: the model selects and invokes the tool, which executes server-side; only the image itself is blocked by the 402 |
+| Two distinct vision models | **VERIFIED** | live on production: Gemini and OpenAI, both for description, OCR and comparison |
+| OCR / image questions / comparison | **VERIFIED** | live on production, on both vision models |
+| Text-to-image | **VERIFIED** | live, 200 + real PNG |
+| Reference-image generation | **VERIFIED** | live, 200 + image |
+| Editing / variations / regenerate | **VERIFIED** | live, `op=edit` and `op=variation` |
+| Download | **VERIFIED** | live: generated image decodes to real PNG bytes |
+| Model-selected tool calling | **VERIFIED** | live: "draw me a lighthouse at sunset" → model called the tool → image in the conversation; "what is 2+2" → 0 images |
 | Context preserved across model switches | **VERIFIED** | pre-existing behaviour + new unit tests for serialisation order |
 | Unsupported capability handled explicitly | **VERIFIED** | `toModelMessages` tests + composer warning |
-| Storage | **PARTIAL** | Blob integration written; no `BLOB_READ_WRITE_TOKEN`, so the inline path is what runs |
+| Storage | **PARTIAL** | Blob integration written and exercised via its fallback; no `BLOB_READ_WRITE_TOKEN` set, so images are inline-only and labelled "not stored" |
 | Keys server-side only | **VERIFIED** | no `process.env` outside `src/server`; no key names in `.next/static` |
 
 ---
@@ -149,7 +151,7 @@ generation goes through `chat()`, not `imageModel()`.
 | Command | Result |
 | --- | --- |
 | `npm test` (baseline) | 199/199 |
-| `npm test` (now) | **234/234** (+35 new) |
+| `npm test` (now) | **245/245** (+46 over the 199 baseline) |
 | `npx tsc --noEmit` | clean |
 | `npx eslint` | exit 0 |
 | `npm run build` | succeeded; `/api/images` listed as a dynamic route |
@@ -164,10 +166,13 @@ generation goes through `chat()`, not `imageModel()`.
 
 ## Remaining work
 
-1. Add `OPENROUTER_API_KEY` (local + Vercel), then live-verify: an image read by
-   each of the two OpenRouter vision models, a text-to-image generation, a
-   reference-guided generation, an edit, a variation, a download, and one
-   prompt that triggers the tool plus one that must not.
-2. Optionally add a Blob store for durable generated images.
-3. Commit and push (not done — the brief requires explicit authorisation).
-4. Deploy and verify the public URL (same Vercel project, same repo).
+1. **Optional:** add a Vercel Blob store (`BLOB_READ_WRITE_TOKEN`) so generated
+   images get durable https URLs instead of living inline in one browser.
+2. **Optional:** add `OPENROUTER_API_KEY` to the Preview environment as well —
+   it is currently Production-only, so preview deployments report the
+   OpenRouter model and image generation as not configured.
+3. **Optional:** connect the GitHub repo to the Vercel project so pushes deploy
+   automatically; deployments are CLI-driven today.
+
+No functional work is outstanding. Every Project 3 requirement is verified
+against production.
