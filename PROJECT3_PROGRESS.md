@@ -15,6 +15,7 @@ it are a further commit on top.
 | --- | --- | --- | --- |
 | Gemini | `gemini-3.6-flash` | direct, `@google/genai` | text **+ vision** |
 | OpenAI | `gpt-5.6-luna` | direct, Responses API | text **+ vision** |
+| Mistral Small 3.2 | `mistralai/mistral-small-3.2-24b-instruct` | **OpenRouter** | text **+ vision**; also a tool host |
 | DeepSeek V3.1 | `deepseek/deepseek-chat-v3.1` | OpenRouter | text-only; **hosts the `generate_image` tool** |
 | Image generation | `google/gemini-2.5-flash-image` | OpenRouter | text-to-image, reference, edit, variation |
 
@@ -29,6 +30,19 @@ chat model would have reduced image generation to a button — the exact
 substitution the requirement forbids.
 
 **No blockers remain.** Everything below is live-verified against production.
+
+### Vision through OpenRouter — added 2026-10-21, deployment `model-switcher-ffv87nsh8`
+
+The brief's technology list asks for vision-capable models *through
+OpenRouter*. Gemini and OpenAI cover vision functionally but bypass OpenRouter
+entirely, so `mistralai/mistral-small-3.2-24b-instruct` was added. Live on
+production, all PASS: answers for this account; described a real screenshot;
+OCR'd its text; compared two images in one request. It also invoked the
+`generate_image` tool ("a blue teapot") and a plain question did not.
+
+Regression after the change, all PASS: DeepSeek still invokes the tool
+(`persisted: true`), and conversation context survived into all four models
+(each recalled "88").
 
 ### Storage smoke tests — deployment `model-switcher-j73tkyehz`
 

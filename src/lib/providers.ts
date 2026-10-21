@@ -22,7 +22,7 @@
  * `storage.ts`) as well as a wire value, so removed ids are migrated rather
  * than left dangling -- see `migrateProviderId` below.
  */
-export type ProviderId = "gemini" | "gpt" | "or-deepseek";
+export type ProviderId = "gemini" | "gpt" | "or-mistral" | "or-deepseek";
 
 export type Provider = {
   id: ProviderId;
@@ -74,6 +74,16 @@ export const PROVIDERS: readonly Provider[] = [
    * the requirement rules out. It is also the text-only model, so it is what
    * keeps the capability gate a reachable path.
    */
+  {
+    // The vision model reached through OpenRouter -- see `models.ts` for why
+    // Mistral specifically, and why not a second attempt at Qwen.
+    id: "or-mistral",
+    label: "Mistral Small 3.2",
+    enabled: true,
+    note: "Not connected — no OPENROUTER_API_KEY configured on the server.",
+    accent: "#b4714a",
+    vision: true,
+  },
   {
     id: "or-deepseek",
     label: "DeepSeek V3.1",

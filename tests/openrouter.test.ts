@@ -219,10 +219,58 @@ test("at least two DISTINCT vision models are selectable", () => {
   assert.equal(ids.size, vision.length, "two entries share an id");
 });
 
+/**
+ * The brief's technology list asks for vision-capable models reached THROUGH
+ * OpenRouter, not merely for vision to work somehow. Gemini and OpenAI are
+ * direct integrations and bypass OpenRouter entirely, so this asserts the
+ * routing requirement separately from the capability requirement above.
+ */
+test("at least one vision model is reached through OpenRouter", () => {
+  const visionViaOpenRouter = OPENROUTER_CHAT_MODELS.filter((m) => m.capabilities.vision);
+  assert.ok(
+    visionViaOpenRouter.length >= 1,
+    "the technology requirement needs a vision model routed through OpenRouter",
+  );
+  for (const model of visionViaOpenRouter) {
+    assert.ok(
+      PROVIDERS.some((p) => p.id === model.id && p.vision && p.enabled),
+      `${model.id} must be selectable and advertised as vision-capable`,
+    );
+  }
+});
+
+test("the OpenRouter vision model is Mistral Small 3.2, from a third vendor", () => {
+  const mistral = findOpenRouterModel("or-mistral");
+  assert.ok(mistral, "or-mistral must be registered");
+  assert.equal(mistral.openrouterId, "mistralai/mistral-small-3.2-24b-instruct");
+  assert.equal(mistral.capabilities.vision, true);
+  // Distinct from the two direct integrations' vendors, so "distinct vision
+  // models" holds however it is counted.
+  assert.equal(mistral.openrouterId.split("/")[0], "mistralai");
+});
+
+test("the OpenRouter vision model also hosts the image tool", () => {
+  // Every OpenRouter chat model gets the tool (openrouter.ts), so a vision
+  // model there can both read an image and be asked to generate one.
+  const ids = OPENROUTER_CHAT_MODELS.map((m) => m.id);
+  assert.ok(ids.includes("or-mistral"));
+  assert.ok(ids.includes("or-deepseek"));
+});
+
+test("an image is serialised for the OpenRouter vision model, not stripped", () => {
+  const model = findOpenRouterModel("or-mistral");
+  assert.ok(model);
+  const [message] = toModelMessages([userWithImage()], model.capabilities.vision);
+  const parts = message.content as Array<{ type: string }>;
+  assert.ok(parts.some((p) => p.type === "image"), "the image part must survive");
+});
+
 test("the two vision models are the direct Gemini and OpenAI integrations", () => {
   const vision = PROVIDERS.filter((p) => p.vision && p.enabled).map((p) => p.id);
   assert.ok(vision.includes("gemini"), "Gemini must remain a selectable vision model");
   assert.ok(vision.includes("gpt"), "OpenAI must remain a selectable vision model");
+  // Adding the OpenRouter vision model must not have displaced either.
+  assert.ok(vision.length >= 3, "all three vision models should be selectable");
 });
 
 test("the removed models are no longer selectable anywhere", () => {

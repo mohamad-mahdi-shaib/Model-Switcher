@@ -6,8 +6,9 @@
  * or inferred from a display name. `input_modalities`/`output_modalities`
  * recorded there are what `vision` and `imageOutput` mean:
  *
- *   deepseek/deepseek-chat-v3.1       in: text              out: text
- *   google/gemini-2.5-flash-image     in: text,image        out: text,image
+ *   mistralai/mistral-small-3.2-24b-instruct  in: text,image  out: text
+ *   deepseek/deepseek-chat-v3.1               in: text        out: text
+ *   google/gemini-2.5-flash-image             in: text,image  out: text,image
  *
  * CATALOGUE-SIMPLIFICATION PASS. This list used to carry two OpenRouter
  * vision models as well -- `anthropic/claude-sonnet-4.5` and
@@ -54,6 +55,27 @@ export type OpenRouterModel = {
  * renders them in.
  */
 export const OPENROUTER_CHAT_MODELS: readonly OpenRouterModel[] = [
+  {
+    /*
+     * A vision model reached THROUGH OpenRouter, which the brief's technology
+     * list asks for explicitly. The two direct integrations (Gemini, OpenAI)
+     * cover vision functionally and are verified, but both bypass OpenRouter
+     * entirely -- so without an entry like this one, no OpenRouter request
+     * ever carries an image.
+     *
+     * Mistral rather than another attempt at Qwen, chosen on evidence:
+     * OpenRouter's per-model endpoint data
+     * (`GET /api/v1/models/:id/endpoints`) shows this model served by FOUR
+     * providers, three reporting status 0 (DeepInfra, Parasail, Mistral).
+     * `qwen/qwen2.5-vl-72b-instruct` has a single provider reporting -5,
+     * which is exactly why every request to it failed -- including plain
+     * text, so it was never an image-input problem.
+     */
+    id: "or-mistral",
+    openrouterId: "mistralai/mistral-small-3.2-24b-instruct",
+    label: "Mistral Small 3.2",
+    capabilities: { vision: true, imageOutput: false },
+  },
   {
     id: "or-deepseek",
     openrouterId: "deepseek/deepseek-chat-v3.1",

@@ -261,6 +261,7 @@ const KEY_NAME: Record<string, string> = {
   // key. Entries for the removed Claude/Qwen ids went with them -- a saved
   // conversation carrying one is migrated by `migrateProviderId`, so nothing
   // ever looks the old ids up here.
+  "or-mistral": "OPENROUTER_API_KEY",
   "or-deepseek": "OPENROUTER_API_KEY",
 };
 

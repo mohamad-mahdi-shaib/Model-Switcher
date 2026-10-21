@@ -446,13 +446,22 @@ Every id and capability below was read from OpenRouter's own catalogue
 | --- | --- | --- | --- |
 | `gemini-3.6-flash` | Google direct (`@google/genai`) | **yes** | no |
 | `gpt-5.6-luna` | OpenAI direct (Responses API) | **yes** | no |
+| `mistralai/mistral-small-3.2-24b-instruct` | **OpenRouter** | **yes** | no |
 | `deepseek/deepseek-chat-v3.1` | OpenRouter | no (text only) | no |
 | `google/gemini-2.5-flash-image` | OpenRouter (generation only) | yes | **yes** |
 
-**The two vision models are the two direct integrations.** Both were verified
-on production against a real screenshot for image description, OCR and
-two-image comparison — different vendors, different APIs, different keys, so
-"two distinct vision models" means two genuinely independent ones.
+**Three vision models, from three vendors, over two transports.** Gemini and
+OpenAI are called directly with their own keys; Mistral Small 3.2 is reached
+through OpenRouter, so an image request genuinely travels that path rather
+than only the direct ones. All three were verified on production against a
+real screenshot for description, OCR and two-image comparison.
+
+Mistral was chosen on evidence rather than preference: OpenRouter's per-model
+endpoint data (`GET /api/v1/models/:id/endpoints`) shows it served by four
+providers, three reporting status `0`. The previously removed
+`qwen/qwen2.5-vl-72b-instruct` has a single provider reporting `-5`, which is
+precisely why every request to it failed — including plain text, so it was
+never an image-input problem.
 
 An earlier revision also offered Claude Sonnet 4.5 and Qwen2.5-VL 72B through
 OpenRouter. Both were removed: Qwen had stopped answering for this account on
