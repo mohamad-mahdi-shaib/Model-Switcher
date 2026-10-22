@@ -150,6 +150,18 @@ export type ChatErrorCode =
    */
   | "INSUFFICIENT_CREDIT"
   | "MODEL_BUSY"
+  /**
+   * Project 4: the conversation has uploaded files, and the attempt to
+   * search them for this question failed.
+   *
+   * This is deliberately NOT folded into UPSTREAM, and deliberately not
+   * swallowed. Answering a question about the user's own documents while
+   * silently skipping the documents produces a confident answer drawn from
+   * general knowledge that looks like it came from the file -- the single
+   * worst outcome available. Failing the turn, and saying why, is the honest
+   * alternative.
+   */
+  | "DOCUMENT_SEARCH_FAILED"
   | "UPSTREAM"
   | "EMPTY_REPLY"
   | "NETWORK"
@@ -246,6 +258,8 @@ export const ERROR_COPY: Record<ChatErrorCode, string> = {
     "{provider} rejected the request for billing reasons - the account has no remaining credit, or a spend limit was reached. Waiting will not clear this; add credit or raise the limit, then retry.",
   MODEL_BUSY:
     "{provider} is experiencing high demand and turned the request away. This is temporary - retry in a moment.",
+  DOCUMENT_SEARCH_FAILED:
+    "Your uploaded files could not be searched for that question, so the answer was not sent - it would not have been based on them. Retry in a moment; if it keeps failing, remove and re-upload the file.",
   UPSTREAM: "{provider} could not complete that request.",
   EMPTY_REPLY:
     "{provider} returned an empty response. Retry, or rephrase the question.",

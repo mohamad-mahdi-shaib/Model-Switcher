@@ -210,6 +210,43 @@ function Block({ node, copyValue }: { node: BlockNode; copyValue?: string }) {
           ))}
         </ul>
       );
+    case "table":
+      return (
+        /* Its own horizontal scroller: a wide table must never widen the
+           conversation column or push the whole transcript sideways. */
+        <div className="glass-scroll my-2 overflow-x-auto">
+          <table className="w-full border-collapse text-left text-[0.95em]">
+            <thead>
+              <tr className="border-b border-white/30">
+                {node.header.map((cell, i) => (
+                  <th
+                    className="px-2 py-1.5 font-semibold whitespace-nowrap glass-text-dark"
+                    key={i}
+                    style={node.align[i] ? { textAlign: node.align[i]! } : undefined}
+                  >
+                    <Inline nodes={cell} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {node.rows.map((row, r) => (
+                <tr className="border-b border-white/15" key={r}>
+                  {row.map((cell, c) => (
+                    <td
+                      className="px-2 py-1.5 align-top glass-text-muted"
+                      key={c}
+                      style={node.align[c] ? { textAlign: node.align[c]! } : undefined}
+                    >
+                      <Inline nodes={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
     case "quote":
       return (
         <blockquote className="my-2 border-l-2 border-white/30 pl-3 italic glass-text-subtle">

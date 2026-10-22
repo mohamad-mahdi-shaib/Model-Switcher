@@ -21,6 +21,8 @@ import {
 import { defaultAppSettings, loadAppSettings, saveAppSettings } from "@/lib/app-settings-storage";
 import { providerKeyName } from "@/lib/chat";
 import { hasOversizedMessage, MAX_MESSAGES } from "@/lib/limits";
+import { probeDocumentSupport, type DocumentCapability } from "@/lib/document-upload";
+import { ExtractionPanel } from "@/components/workspace/ExtractionPanel";
 import type { GeneratedImageRef } from "@/lib/chat";
 import type { Preferences } from "@/lib/preferences";
 import {
@@ -51,7 +53,7 @@ import { useVoiceOptions } from "@/lib/use-speech";
  * lives in the global header (`AppHeader.tsx`) rather than the sidebar
  * footer, so it is reachable at every width and in every sidebar state.
  */
-type ActiveOverlay = "provider" | "settings" | "sidebar" | null;
+type ActiveOverlay = "provider" | "settings" | "sidebar" | "extract" | null;
 
 /**
  * State container and composition root. The layout itself -- header,
@@ -82,6 +84,13 @@ export function WorkspaceLayout() {
   /** Project 3: a failure from an explicit Regenerate / Make-a-variation. */
   const [imageError, setImageError] = useState<string | null>(null);
   const [availability, setAvailability] = useState<AvailabilityMap | null>(null);
+  /**
+   * Project 4: whether this server can index documents at all (blob storage
+   * plus embeddings). Probed rather than assumed, because it decides where a
+   * picked PDF goes -- the document workspace, or the pre-existing inline
+   * chat-attachment path. Booleans and limits only; never a token.
+   */
+  const [documentSupport, setDocumentSupport] = useState<DocumentCapability | null>(null);
   const composerRef = useRef<ComposerHandle>(null);
   // Interaction refinement: local sidebar search. Lifted here, like every
   // other piece of sidebar state, so there is one query regardless of
@@ -202,6 +211,9 @@ export function WorkspaceLayout() {
     removeAttachment,
     exportConversations,
     deleteAllConversations,
+    documents,
+    addDocument,
+    removeDocument,
   } = useConversations(preferences);
 
   // Interaction refinement: selecting a search result switches to its
@@ -330,6 +342,22 @@ export function WorkspaceLayout() {
     };
   }, []);
 
+  // Project 4: the same question for documents. A failed or unconfigured
+  // probe leaves this null, which the composer reads as "no document
+  // workspace" and falls back to inline attachments -- never an error about
+  // a feature the user has not tried to use yet.
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    void probeDocumentSupport(controller.signal).then((capability) => {
+      if (!cancelled) setDocumentSupport(capability);
+    });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, []);
+
   const provider = active?.providerId ?? DEFAULT_PROVIDER;
   // Readiness follows the *active* provider rather than a hardcoded one. With
   // two providers, gating the composer on Gemini would lock out a perfectly
@@ -392,6 +420,15 @@ export function WorkspaceLayout() {
           />
         }
         overlays={
+          <>
+          <ExtractionPanel
+            conversationId={activeId}
+            documents={documents}
+            onClose={() => setActiveOverlay(null)}
+            open={overlay === "extract"}
+            portalContainer={shellEl}
+          />
+
           <SettingsOverlay
             background={background}
             glass={glass}
@@ -418,6 +455,7 @@ export function WorkspaceLayout() {
             textSize={textSize}
             voices={speechVoices}
           />
+          </>
         }
         shellRef={setShellEl}
         sidebar={
@@ -497,6 +535,14 @@ export function WorkspaceLayout() {
           }}
           onSend={send}
           onStartNewConversation={newConversation}
+          conversationId={activeId}
+          documents={documents}
+          documentsEnabled={Boolean(documentSupport?.configured)}
+          onDocumentIndexed={addDocument}
+          onRemoveDocument={(id) => {
+            if (activeId) removeDocument(activeId, id);
+          }}
+          onExtract={() => setActiveOverlay("extract")}
           onStop={stop}
           portalContainer={shellEl}
           provider={provider}

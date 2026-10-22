@@ -233,6 +233,17 @@ export function FileIcon(props: IconProps) {
   );
 }
 
+/** Project 4: structured extraction -- a grid, for tabular output. */
+export function TableIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect height="16" rx="2" width="18" x="3" y="4" />
+      <path d="M3 10h18" />
+      <path d="M9 10v10" />
+    </Icon>
+  );
+}
+
 export function DownloadIcon(props: IconProps) {
   return (
     <Icon {...props}>

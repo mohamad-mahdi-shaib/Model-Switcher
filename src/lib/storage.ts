@@ -2,6 +2,7 @@
 
 import { migrateProviderId, type ProviderId } from "@/lib/providers";
 import type { ChatMessage } from "@/lib/chat";
+import { DOCUMENT_EXTENSIONS, type DocumentRef } from "@/lib/documents";
 export type { MessageState } from "@/lib/chat";
 
 /**
@@ -48,6 +49,21 @@ export type Conversation = {
   createdAt: number;
   updatedAt: number;
   messages: ChatMessage[];
+  /**
+   * Project 4: the files uploaded into this conversation.
+   *
+   * METADATA ONLY -- id, name, kind, size, section count. The parsed text
+   * and its embeddings live server-side in blob storage (see
+   * `@/server/documents/store.ts`); none of it is ever written here, which
+   * keeps a 4 MB document from trying to fit in a 5 MB localStorage quota.
+   *
+   * Optional, like every other field added after the first release: a
+   * conversation saved before documents existed has no such key and must
+   * still load, so the validator short-circuits on `undefined` and the
+   * schema VERSION does not change. Bumping VERSION would classify every
+   * existing saved conversation as a future version and refuse to read it.
+   */
+  documents?: DocumentRef[];
 };
 
 export type PersistedState = {
@@ -148,6 +164,44 @@ function isAttachmentMeta(v: unknown): boolean {
   );
 }
 
+const DOCUMENT_KINDS = Object.keys(DOCUMENT_EXTENSIONS) as readonly string[];
+
+/**
+ * Project 4: one uploaded document's metadata, as persisted on a
+ * conversation. Validated field by field like every other optional
+ * addition -- one malformed entry fails the payload rather than loading a
+ * half-formed chip that points at nothing.
+ *
+ * The `id` is checked for shape, not merely for being a string: it is the
+ * capability the server will accept for this document, and a value that
+ * cannot possibly be one (a path, an old-style `doc-1` id) is corruption,
+ * not data.
+ */
+function isDocumentRef(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const d = v as Record<string, unknown>;
+  const meta = d.meta as Record<string, unknown> | undefined;
+  return (
+    typeof d.id === "string" &&
+    /^[A-Za-z0-9_-]{43,86}$/.test(d.id) &&
+    typeof d.filename === "string" &&
+    DOCUMENT_KINDS.includes(d.kind as string) &&
+    typeof d.bytes === "number" &&
+    typeof d.sections === "number" &&
+    typeof d.uploadedAt === "number" &&
+    Array.isArray(d.warnings) &&
+    d.warnings.every((w) => typeof w === "string") &&
+    Boolean(meta) &&
+    typeof meta === "object" &&
+    typeof meta.chars === "number" &&
+    typeof meta.truncated === "boolean" &&
+    (meta.pages === undefined || typeof meta.pages === "number") &&
+    (meta.rows === undefined || typeof meta.rows === "number") &&
+    (meta.sheets === undefined ||
+      (Array.isArray(meta.sheets) && meta.sheets.every((s) => typeof s === "string")))
+  );
+}
+
 /** Structural validation. Anything unexpected fails the whole payload. */
 function isMessage(v: unknown): v is ChatMessage {
   if (!v || typeof v !== "object") return false;
@@ -191,7 +245,11 @@ function isConversation(v: unknown): v is Conversation {
     typeof c.createdAt === "number" &&
     typeof c.updatedAt === "number" &&
     Array.isArray(c.messages) &&
-    c.messages.every(isMessage)
+    c.messages.every(isMessage) &&
+    // Project 4: absent on every conversation saved before documents
+    // existed, and on any conversation with no files.
+    (c.documents === undefined ||
+      (Array.isArray(c.documents) && c.documents.every(isDocumentRef)))
   );
 }
 

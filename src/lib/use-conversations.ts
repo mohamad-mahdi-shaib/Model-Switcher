@@ -23,6 +23,8 @@ import { buildExportPayload } from "@/lib/conversation-export";
 import { buildConversationsPdf, exportPdfFileName } from "@/lib/conversation-pdf";
 import { buildWireAttachments } from "@/lib/attachments";
 import { deleteAttachmentsBytes } from "@/lib/attachment-storage";
+import { MAX_DOCUMENTS_PER_CONVERSATION, type DocumentRef } from "@/lib/documents";
+import { deleteStoredDocument } from "@/lib/document-upload";
 import {
   canAutoPersist,
   loadConversations,
@@ -436,6 +438,14 @@ export function useConversations(preferences: Preferences) {
       setError(null);
       setErrorInfo(null);
 
+      // Project 4: read from the ref, not from a closure over React state,
+      // for the same reason `preferencesRef` is -- `run` is also called by
+      // Retry and Regenerate long after it was created, and a stale list
+      // would search the wrong set of files.
+      const documentIds = (
+        conversationsRef.current.find((c) => c.id === conversationId)?.documents ?? []
+      ).map((d) => d.id);
+
       // True only while this exact request still owns the stream.
       const current = () =>
         runRef.current?.requestId === requestId &&
@@ -611,6 +621,22 @@ export function useConversations(preferences: Preferences) {
             provider: providerId,
             messages: wireMessages,
             ...(hasPreferences(currentPreferences) ? { preferences: currentPreferences } : {}),
+            /**
+             * Project 4: the files this conversation has uploaded, read at
+             * REQUEST time rather than captured when the draft was typed --
+             * so a file added while the previous answer was still streaming
+             * is searched by the next question, and one removed is not.
+             *
+             * Sent on Retry, Regenerate and Edit-and-resend as well, since
+             * all three route through this same function: re-asking a
+             * question about a document searches the document again rather
+             * than reusing a stale answer. Both fields are omitted entirely
+             * when the conversation has no files, keeping such a request
+             * identical to what it was before documents existed.
+             */
+            ...(documentIds.length > 0
+              ? { conversationId, documentIds }
+              : {}),
           }),
           signal: controller.signal,
         });
@@ -1148,6 +1174,13 @@ export function useConversations(preferences: Preferences) {
       const deleted = conversationsRef.current.find((c) => c.id === id);
       const attachmentIds = deleted?.messages.flatMap((m) => m.attachments?.map((a) => a.id) ?? []) ?? [];
       if (attachmentIds.length > 0) void deleteAttachmentsBytes(attachmentIds);
+      // Project 4: the same reasoning for blob-stored documents. Deleting
+      // the conversation discards the only copy of their ids, so they could
+      // never be reached again -- they are deleted here rather than left
+      // paid-for and unreachable.
+      for (const document of deleted?.documents ?? []) {
+        void deleteStoredDocument(document.id, id);
+      }
       setConversations((prev) => {
         const next = prev.filter((c) => c.id !== id);
         if (activeIdRef.current === id) {
@@ -1201,6 +1234,66 @@ export function useConversations(preferences: Preferences) {
     [patch],
   );
 
+  /* ------------------------------------------------------------ documents */
+
+  /**
+   * Records an uploaded, indexed document on its conversation.
+   *
+   * Takes the conversation id explicitly rather than using the active one:
+   * an upload is async, and the user may well have switched conversations
+   * while a 4 MB PDF was being parsed and embedded. The file belongs to the
+   * conversation it was dropped into, not to whichever one happens to be
+   * open when the request finishes.
+   *
+   * Returns false if the conversation is already at the cap, so the caller
+   * can say so rather than silently dropping the file. Over-cap is checked
+   * here, not only in the composer, because this is the one place that
+   * actually knows the current list.
+   */
+  const addDocument = useCallback(
+    (conversationId: string, document: DocumentRef): boolean => {
+      const conversation = conversationsRef.current.find((c) => c.id === conversationId);
+      if (!conversation) return false;
+      const existing = conversation.documents ?? [];
+      if (existing.length >= MAX_DOCUMENTS_PER_CONVERSATION) return false;
+      // Same id twice would double that file's share of the retrieval
+      // budget. Re-uploading the same FILE produces a new id and is a
+      // genuinely separate document, which is correct -- this only guards
+      // against the same response being recorded twice.
+      if (existing.some((d) => d.id === document.id)) return true;
+      patch(conversationId, (c) => ({
+        ...c,
+        updatedAt: Date.now(),
+        documents: [...(c.documents ?? []), document],
+      }));
+      schedulePersist();
+      return true;
+    },
+    [patch, schedulePersist],
+  );
+
+  /**
+   * Removes a document from a conversation AND from server storage.
+   *
+   * The chip disappears immediately; the server delete runs in the
+   * background. If it fails the blob is left behind -- an orphan the user
+   * cannot see or reach, since the id is gone from the only place it was
+   * kept -- which is the right way round: a chip that reappears because a
+   * delete failed would be worse than a blob that expires on its own.
+   */
+  const removeDocument = useCallback(
+    (conversationId: string, documentId: string) => {
+      patch(conversationId, (c) => ({
+        ...c,
+        updatedAt: Date.now(),
+        documents: (c.documents ?? []).filter((d) => d.id !== documentId),
+      }));
+      schedulePersist();
+      void deleteStoredDocument(documentId, conversationId);
+    },
+    [patch, schedulePersist],
+  );
+
   /**
    * Settings > Conversations > Export. Downloads just the SELECTED saved
    * (non-draft) conversations -- `conversationIds` lets the user narrow
@@ -1241,6 +1334,11 @@ export function useConversations(preferences: Preferences) {
       (c) => c.messages.flatMap((m) => m.attachments?.map((a) => a.id) ?? []),
     );
     if (attachmentIds.length > 0) void deleteAttachmentsBytes(attachmentIds);
+    for (const conversation of conversationsRef.current) {
+      for (const document of conversation.documents ?? []) {
+        void deleteStoredDocument(document.id, conversation.id);
+      }
+    }
     const draft = emptyConversation(DEFAULT_PROVIDER);
     setConversations([draft]);
     setActiveId(draft.id);
@@ -1280,6 +1378,9 @@ export function useConversations(preferences: Preferences) {
     setConversationProvider,
     appendGeneratedImages,
     removeAttachment,
+    documents: active?.documents ?? [],
+    addDocument,
+    removeDocument,
     exportConversations,
     deleteAllConversations,
   };

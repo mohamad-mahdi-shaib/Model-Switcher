@@ -16,6 +16,7 @@ import {
   StopIcon,
   XIcon,
 } from "@/components/icons";
+import { SaveAnswerMenu } from "@/components/workspace/SaveAnswerMenu";
 import { GeneratedImages } from "@/components/workspace/GeneratedImages";
 import { Markdown } from "@/components/workspace/Markdown";
 import {
@@ -561,6 +562,11 @@ function AssistantMessage({
         <div className="flex flex-wrap items-center gap-2">
           {/* Canonical content, never the revealed prefix. */}
           {!streaming && message.content ? <CopyResponse text={message.content} /> : null}
+          {/* Project 4: the same canonical content, as a real file. Offered
+              on every settled answer, not only the latest -- an earlier
+              answer is just as worth keeping, and nothing about saving it
+              depends on it being the most recent. */}
+          {!streaming && message.content ? <SaveAnswerMenu text={message.content} /> : null}
           {/* Interaction refinement: only on the conversation's latest,
               settled answer -- see use-conversations.ts's regenerate() for
               why. A real provider request, never a replay of existing

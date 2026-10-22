@@ -223,6 +223,13 @@ export function textLength(blocks: BlockNode[]): number {
       case "list":
         for (const item of block.items) n += inlineLength(item);
         break;
+      case "table":
+        // Every cell's text counts, header included: the reveal pacing has
+        // to budget for a table the same way it does for a long list, or a
+        // wide table would appear in one jump.
+        for (const cell of block.header) n += inlineLength(cell);
+        for (const row of block.rows) for (const cell of row) n += inlineLength(cell);
+        break;
       case "hr":
         break;
     }
@@ -303,6 +310,14 @@ export function tagRuns(blocks: BlockNode[], cuts: readonly number[]): BlockNode
       }
       case "list":
         return { ...block, items: block.items.map((item) => inline(item)) };
+      case "table":
+        // Cells are walked in reading order -- header first, then row by
+        // row -- so `pos` advances exactly as textLength counted it.
+        return {
+          ...block,
+          header: block.header.map((cell) => inline(cell)),
+          rows: block.rows.map((row) => row.map((cell) => inline(cell))),
+        };
       case "hr":
         return block;
     }

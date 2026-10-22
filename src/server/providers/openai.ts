@@ -333,6 +333,7 @@ export const openaiProvider: ChatProvider = {
     messages: readonly WireMessage[],
     signal: AbortSignal,
     preferences?: Preferences,
+    documentContext?: string,
   ): Promise<AsyncIterable<ProviderChunk>> {
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) throw new ProviderError("MISSING_KEY");
@@ -380,7 +381,7 @@ export const openaiProvider: ChatProvider = {
     // only when there is something to say, so a request with no saved
     // preferences sends the exact same `input` array as before this
     // existed.
-    const systemInstruction = buildSystemInstructionText(preferences);
+    const systemInstruction = buildSystemInstructionText(preferences, documentContext);
     const finalInput = systemInstruction
       ? [{ role: "developer", content: systemInstruction }, ...input]
       : input;

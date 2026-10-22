@@ -17,6 +17,14 @@ import {
   type DraftAttachment,
 } from "@/lib/attachments";
 import { deleteAttachmentsBytes } from "@/lib/attachment-storage";
+import { DocumentTray } from "@/components/workspace/DocumentTray";
+import {
+  documentKindFromName,
+  DOCUMENT_ACCEPT_ATTRIBUTE,
+  MAX_DOCUMENTS_PER_CONVERSATION,
+  type DocumentRef,
+} from "@/lib/documents";
+import { uploadDocument, type DraftDocument } from "@/lib/document-upload";
 import { ProviderSwitcher } from "@/components/workspace/ProviderMenu";
 import { newId, type AttachmentMeta } from "@/lib/chat";
 import { getProviderMeta, type AvailabilityMap, type ProviderId } from "@/lib/providers";
@@ -61,6 +69,28 @@ type MessageComposerProps = {
   providerMenuOpen: boolean;
   onProviderMenuOpenChange: (open: boolean) => void;
   portalContainer: HTMLElement | null;
+  /* ----------------------------------------------- Project 4: documents */
+  /**
+   * The conversation an upload belongs to, captured when the file is picked
+   * rather than read when the upload finishes -- parsing and embedding a
+   * large PDF takes real time, and the user may switch conversations while
+   * it runs. Null before hydration, which disables document upload.
+   */
+  conversationId: string | null;
+  /** Files already indexed for this conversation. */
+  documents: readonly DocumentRef[];
+  /**
+   * Whether the server can index documents (blob storage + embeddings).
+   * When false, a picked document falls back to the pre-existing inline
+   * attachment path, so an unconfigured deployment behaves exactly as it
+   * did before this feature existed rather than refusing the file.
+   */
+  documentsEnabled: boolean;
+  /** Records a finished upload. Returns false if the conversation is full. */
+  onDocumentIndexed: (conversationId: string, document: DocumentRef) => boolean;
+  onRemoveDocument: (id: string) => void;
+  /** Opens the structured-extraction dialog. */
+  onExtract: () => void;
 };
 
 const MAX_ROWS = 6;
@@ -82,6 +112,12 @@ export function MessageComposer({
   providerMenuOpen,
   onProviderMenuOpenChange,
   portalContainer,
+  conversationId,
+  documents,
+  documentsEnabled,
+  onDocumentIndexed,
+  onRemoveDocument,
+  onExtract,
 }: MessageComposerProps) {
   const [value, setValue] = useState("");
   // F3: set only when a submit attempt is refused for a reason worth its own
@@ -90,6 +126,15 @@ export function MessageComposer({
   // already prevents or explains another way.
   const [rejection, setRejection] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
+  /**
+   * Project 4: uploads still in flight (and failed ones, kept visible until
+   * dismissed). A SUCCEEDED upload is not held here -- it moves to the
+   * conversation itself via `onDocumentIndexed`, because it now outlives
+   * this draft and survives a reload, which is the whole difference between
+   * a document and an attachment.
+   */
+  const [documentDrafts, setDocumentDrafts] = useState<DraftDocument[]>([]);
+  const uploadAborts = useRef(new Map<string, AbortController>());
   const [dragActive, setDragActive] = useState(false);
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -142,8 +187,30 @@ export function MessageComposer({
    * silently appearing only once it's already done.
    */
   const handleFiles = async (fileList: FileList | File[]) => {
-    const files = Array.from(fileList);
+    const all = Array.from(fileList);
+    if (all.length === 0) return;
+
+    /**
+     * Project 4: a picked file goes to ONE of two places.
+     *
+     * A document (PDF, DOCX, XLSX, CSV, code, text) goes to the document
+     * workspace: parsed, chunked, embedded and searchable for the rest of
+     * the conversation. Anything else -- in practice an image -- stays on
+     * the pre-existing inline attachment path, which is what vision models
+     * read.
+     *
+     * The capability check matters. On a server without blob storage or
+     * embeddings there is nothing to index into, so documents fall back to
+     * inline attachments and behave exactly as they did before this
+     * feature existed -- a deployment missing one variable loses document
+     * search, not the ability to attach a PDF.
+     */
+    const canIndex = documentsEnabled && Boolean(conversationId);
+    const files = canIndex ? all.filter((file) => !documentKindFromName(file.name)) : all;
+    const documentFiles = canIndex ? all.filter((file) => documentKindFromName(file.name)) : [];
+    if (documentFiles.length > 0) void uploadDocuments(documentFiles);
     if (files.length === 0) return;
+
     const placeholders: DraftAttachment[] = files.map((file) => ({
       id: newId("att"),
       name: file.name,
@@ -181,6 +248,102 @@ export function MessageComposer({
     });
   };
 
+  /**
+   * Uploads documents one at a time.
+   *
+   * Sequential, not parallel, and deliberately so: each upload parses the
+   * file and then embeds every chunk of it, so ten files at once is the
+   * fastest way to hit the embedding service's rate limit and have most of
+   * them fail together. One after another is slower in the best case and far
+   * more likely to finish in the realistic one. Each file's chip reports its
+   * own progress, so the queue is visible rather than looking stalled.
+   */
+  const uploadDocuments = async (files: File[]) => {
+    const conversation = conversationId;
+    if (!conversation) return;
+
+    let indexed = documents.length;
+    for (const file of files) {
+      const key = newId("doc");
+      const kind = documentKindFromName(file.name);
+
+      if (indexed >= MAX_DOCUMENTS_PER_CONVERSATION) {
+        // Refused with its own chip and reason, never dropped silently.
+        setDocumentDrafts((prev) => [
+          ...prev,
+          {
+            key,
+            name: file.name,
+            size: file.size,
+            kind,
+            status: "error",
+            error: `At most ${MAX_DOCUMENTS_PER_CONVERSATION} files per conversation. Remove one first.`,
+          },
+        ]);
+        continue;
+      }
+
+      const controller = new AbortController();
+      uploadAborts.current.set(key, controller);
+      setDocumentDrafts((prev) => [
+        ...prev,
+        { key, name: file.name, size: file.size, kind, status: "uploading" },
+      ]);
+
+      const outcome = await uploadDocument(file, conversation, {
+        existingCount: indexed,
+        signal: controller.signal,
+      });
+      uploadAborts.current.delete(key);
+
+      // The chip may have been dismissed (and the request aborted) while
+      // this was in flight -- in which case there is nothing to report and
+      // nothing to record.
+      if (controller.signal.aborted) continue;
+
+      if (outcome.ok) {
+        // Lands on the conversation it was dropped into, which may no
+        // longer be the open one.
+        const accepted = onDocumentIndexed(conversation, outcome.document);
+        setDocumentDrafts((prev) =>
+          accepted
+            ? prev.filter((draft) => draft.key !== key)
+            : prev.map((draft) =>
+                draft.key === key
+                  ? { ...draft, status: "error", error: "This conversation is already full." }
+                  : draft,
+              ),
+        );
+        if (accepted) indexed += 1;
+        continue;
+      }
+
+      setDocumentDrafts((prev) =>
+        prev.map((draft) =>
+          draft.key === key ? { ...draft, status: "error", error: outcome.message } : draft,
+        ),
+      );
+    }
+  };
+
+  /** Cancels an in-flight upload, or dismisses a failed one's chip. */
+  const dismissDocumentDraft = (key: string) => {
+    uploadAborts.current.get(key)?.abort();
+    uploadAborts.current.delete(key);
+    setDocumentDrafts((prev) => prev.filter((draft) => draft.key !== key));
+  };
+
+  // Abort every still-running upload if the composer goes away (a closed
+  // tab, a conversation switch that remounts it) rather than leaving a
+  // request writing into a conversation nobody is looking at.
+  useEffect(() => {
+    const aborts = uploadAborts.current;
+    return () => {
+      for (const controller of aborts.values()) controller.abort();
+      aborts.clear();
+    };
+  }, []);
+
   const removeAttachment = (id: string) => {
     setAttachments((prev) => {
       const target = prev.find((a) => a.id === id);
@@ -199,6 +362,13 @@ export function MessageComposer({
   // that wasn't finished preparing yet was indistinguishable from a ready
   // one, so nothing stopped sending too early.
   const hasPendingAttachments = attachments.some((a) => a.status === "staging");
+  /**
+   * Project 4: a question asked while a file is still being indexed would
+   * not search that file -- the document id does not exist yet -- and the
+   * answer would look as though the file had been read. Send waits, exactly
+   * as it already does for a staging attachment.
+   */
+  const indexingDocuments = documentDrafts.some((d) => d.status === "uploading");
   // The chip itself always shows its own reason too (see AttachmentTray), but
   // that caption is small and easy to miss, and it alone was previously the
   // ONLY explanation for why Send had gone gray -- surfaced here as well, in
@@ -207,7 +377,7 @@ export function MessageComposer({
 
   const submit = () => {
     if (streaming || disabled) return;
-    if (hasAttachmentErrors || hasPendingAttachments) return;
+    if (hasAttachmentErrors || hasPendingAttachments || indexingDocuments) return;
     if (!value.trim() && attachments.length === 0) return;
     const metas: AttachmentMeta[] = attachments
       .filter((a): a is DraftAttachment & { prepared: NonNullable<DraftAttachment["prepared"]> } => Boolean(a.prepared))
@@ -267,7 +437,13 @@ export function MessageComposer({
       ? `${meta.label} cannot read images. Your ${stagedImages === 1 ? "image" : "images"} will be named in the message but not analysed — switch to a vision model to have ${stagedImages === 1 ? "it" : "them"} read.`
       : null;
 
-  const notice = capNotice ?? rejection ?? attachmentErrorMessage ?? visionNotice;
+  const documentErrorMessage = documentDrafts.find((d) => d.status === "error")?.error ?? null;
+  const indexingNotice = indexingDocuments
+    ? `Reading and indexing ${documentDrafts.filter((d) => d.status === "uploading").length === 1 ? "your file" : "your files"} — Send unlocks once ${documentDrafts.filter((d) => d.status === "uploading").length === 1 ? "it is" : "they are"} searchable.`
+    : null;
+
+  const notice =
+    capNotice ?? rejection ?? attachmentErrorMessage ?? documentErrorMessage ?? indexingNotice ?? visionNotice;
   const blocked = conversationFull || hasOversizedHistoryMessage;
 
   return (
@@ -303,6 +479,14 @@ export function MessageComposer({
           if (event.dataTransfer.files.length > 0) void handleFiles(event.dataTransfer.files);
         }}
       >
+        <DocumentTray
+          documents={documents}
+          drafts={documentDrafts}
+          onDismissDraft={dismissDocumentDraft}
+          onExtract={onExtract}
+          onRemoveDocument={onRemoveDocument}
+        />
+
         <AttachmentTray attachments={attachments} onRemove={removeAttachment} />
 
         <textarea
@@ -357,7 +541,10 @@ export function MessageComposer({
             <PaperclipIcon className="h-4 w-4" />
           </button>
           <input
-            accept="image/jpeg,image/png,image/webp,application/pdf,.txt,.md,.csv,.json,.js,.ts,.tsx,.jsx,.py,.java,.c,.cpp,.h,.css,.html,.yaml,.yml,.xml,.sh"
+            /* Images for vision, plus every document type the workspace can
+               parse -- DOCX and XLSX among them, which the inline
+               attachment path never accepted. */
+            accept={`image/jpeg,image/png,image/webp,${DOCUMENT_ACCEPT_ATTRIBUTE}`}
             className="sr-only"
             multiple
             onChange={(event) => {
@@ -404,7 +591,8 @@ export function MessageComposer({
                   (!value.trim() && attachments.length === 0) ||
                   blocked ||
                   hasAttachmentErrors ||
-                  hasPendingAttachments
+                  hasPendingAttachments ||
+                  indexingDocuments
                 }
                 onClick={submit}
                 title={disabled ? disabledReason : undefined}

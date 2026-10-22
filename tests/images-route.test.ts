@@ -1,7 +1,18 @@
-import { test } from "node:test";
+import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { GET, POST } from "@/app/api/images/route";
 import { MAX_ATTACHMENT_BYTES } from "@/lib/limits";
+
+import { resetRateLimits } from "@/server/rate-limit";
+
+/**
+ * Project 4, Milestone 6: the routes are rate limited per client, and a
+ * test file makes far more requests from one "client" in a few seconds
+ * than any real session would. Counters are cleared before each test so a
+ * limit meant for abuse does not make the suite's results depend on how
+ * many requests the previous test happened to make.
+ */
+beforeEach(() => resetRateLimits());
 
 /**
  * Project 3: route-level tests for `/api/images`, calling the real exported

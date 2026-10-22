@@ -10,6 +10,10 @@ import { hasPreferences, validatePreferences, type Preferences } from "@/lib/pre
 import { getProvider, providerAvailability } from "@/server/providers/registry";
 import { ProviderError, type ProviderChunk } from "@/server/providers/types";
 import { validateWireAttachments } from "@/server/attachments";
+import { MAX_DOCUMENTS_PER_CONVERSATION } from "@/lib/documents";
+import { buildDocumentContext } from "@/server/documents/retrieve";
+import { isValidDocumentId } from "@/server/documents/store";
+import { checkRateLimit, rateLimitResponse } from "@/server/rate-limit";
 
 /**
  * Provider-neutral chat endpoint.
@@ -80,6 +84,33 @@ function isValidWireMessage(v: unknown): v is WireMessage {
   );
 }
 
+/**
+ * Project 4: the ids of the conversation's uploaded documents.
+ *
+ * Both fields are optional — a request from before documents existed, or from
+ * a conversation with no files, carries neither and behaves exactly as it
+ * always did. When they ARE present they are validated strictly, because
+ * `documentIds` is a list of capabilities: a malformed one is a bug or a
+ * probe, never something to tolerate quietly.
+ *
+ * Note what this does NOT do: it does not treat `conversationId` as proof of
+ * anything. It is the binding a document was stored with, and `loadDocument`
+ * checks it in constant time against the stored value; the unguessable
+ * document id is the actual access control. See `store.ts`.
+ */
+function validateDocumentIds(value: unknown): string[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_DOCUMENTS_PER_CONVERSATION) return null;
+  if (!value.every((id) => isValidDocumentId(id))) return null;
+  // De-duplicated: the same document twice would double its passages' share
+  // of the context budget and crowd out the other files.
+  return [...new Set(value as string[])];
+}
+
+function isValidConversationId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 128 && /^[\w.:-]+$/.test(value);
+}
+
 /** Server-side diagnostics. Never logs credentials. */
 function logUpstream(where: string, error: unknown) {
   const code = error instanceof ProviderError ? error.code : undefined;
@@ -106,6 +137,20 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  /**
+   * Set far above interactive use -- a person sends a handful of messages a
+   * minute -- so this never interferes with a real conversation and only
+   * catches a client in a retry loop. See `rate-limit.ts` for what this
+   * does and does not protect against.
+   */
+  const limit = checkRateLimit("chat", request);
+  if (!limit.ok) {
+    return rateLimitResponse(
+      limit.retryAfterSeconds,
+      `Too many requests. Try again in ${limit.retryAfterSeconds} seconds.`,
+    );
+  }
+
   let parsed: unknown;
   try {
     parsed = await request.json();
@@ -119,7 +164,13 @@ export async function POST(request: Request) {
   if (!isPlainRecord(parsed)) {
     return errorResponse("BAD_REQUEST", 400, "Request body must be a JSON object.");
   }
-  const body = parsed as { provider?: unknown; messages?: unknown; preferences?: unknown };
+  const body = parsed as {
+    provider?: unknown;
+    messages?: unknown;
+    preferences?: unknown;
+    conversationId?: unknown;
+    documentIds?: unknown;
+  };
 
   // Unknown or unregistered provider. Checked before configuration so a
   // disabled provider is refused as disabled, never mislabelled as a setup
@@ -171,6 +222,61 @@ export async function POST(request: Request) {
     if (hasPreferences(p)) preferences = p;
   }
 
+  /**
+   * Project 4: ground this turn in the conversation's uploaded files.
+   *
+   * Retrieval runs on EVERY turn that has documents attached, against that
+   * turn's own question -- not once at upload time. That is what makes a
+   * follow-up ("and what about clause 9?") search the file again instead of
+   * reusing whatever was relevant to the first question, and it is why a
+   * model switch mid-conversation keeps the grounding: the passages are
+   * fetched here, provider-neutrally, and handed to whichever adapter is
+   * answering.
+   */
+  const documentIds = validateDocumentIds(body.documentIds);
+  if (documentIds === null) {
+    return errorResponse("BAD_REQUEST", 400, "Document references were malformed.");
+  }
+  if (documentIds.length > 0 && !isValidConversationId(body.conversationId)) {
+    return errorResponse("BAD_REQUEST", 400, "A conversation id is required to search uploaded files.");
+  }
+
+  let documentContext: string | undefined;
+  if (documentIds.length > 0) {
+    const question = validMessages.at(-1)?.content ?? "";
+    try {
+      const retrieved = await buildDocumentContext(
+        question,
+        documentIds,
+        body.conversationId as string,
+      );
+      // Ids were supplied but none resolved: the documents are gone, or
+      // belong to another conversation. Answering anyway would produce a
+      // reply that looks file-based and is not, so the turn fails instead.
+      if (retrieved.searched.length === 0) {
+        return errorResponse(
+          "DOCUMENT_SEARCH_FAILED",
+          502,
+          "The uploaded files for this conversation could not be read back. Remove them and upload again.",
+        );
+      }
+      documentContext = retrieved.context;
+      // Counts and filenames only -- never passage text, never a blob URL.
+      console.log("[chat] document retrieval", {
+        mode: retrieved.mode,
+        documents: retrieved.searched.length,
+        grounded: Boolean(retrieved.context),
+      });
+    } catch (error) {
+      logUpstream("document retrieval", error);
+      return errorResponse(
+        "DOCUMENT_SEARCH_FAILED",
+        502,
+        "The uploaded files could not be searched for this question.",
+      );
+    }
+  }
+
   // Transient failures are common: capacity rejections and dropped transports.
   // Both are worth a couple of quick retries. Auth, quota and malformed-request
   // failures are never retried -- repeating them only burns quota and delays
@@ -180,7 +286,7 @@ export async function POST(request: Request) {
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
-      stream = await provider.stream(validMessages, request.signal, preferences);
+      stream = await provider.stream(validMessages, request.signal, preferences, documentContext);
       break;
     } catch (error) {
       if (request.signal.aborted) return new Response(null, { status: 499 });

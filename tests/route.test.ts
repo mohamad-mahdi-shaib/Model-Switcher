@@ -1,8 +1,19 @@
-import { test } from "node:test";
+import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { GET, POST } from "@/app/api/chat/route";
 import type { StreamEvent } from "@/lib/chat";
 import { MAX_CUSTOM_INSTRUCTIONS_CHARS, MAX_PREFERRED_NAME_CHARS } from "@/lib/preferences";
+
+import { resetRateLimits } from "@/server/rate-limit";
+
+/**
+ * Project 4, Milestone 6: the routes are rate limited per client, and a
+ * test file makes far more requests from one "client" in a few seconds
+ * than any real session would. Counters are cleared before each test so a
+ * limit meant for abuse does not make the suite's results depend on how
+ * many requests the previous test happened to make.
+ */
+beforeEach(() => resetRateLimits());
 
 /**
  * Genuine route-level tests: calls the real, unmodified `POST`/`GET` handlers
@@ -455,6 +466,169 @@ test("Personalizations: no preferences field at all still succeeds exactly as be
       assert.equal(response.status, 200);
       const body = JSON.parse(String(mock.calls[0].body));
       assert.deepEqual(body.input, [{ role: "user", content: "hi" }]);
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+/* ------------------------------------------- Project 4: document grounding */
+
+/**
+ * These exercise `/api/chat`'s document path through the real handler.
+ *
+ * `mockUpstream` throws on any URL except the OpenAI endpoint, so these also
+ * prove something worth proving: when the uploaded files cannot be read, the
+ * provider is NEVER called. An answer that looked file-based but was not is
+ * the failure these guard against, and `mock.calls.length === 0` is what
+ * shows it did not happen.
+ *
+ * No `BLOB_READ_WRITE_TOKEN` is set in the test environment, so the store
+ * declines before any request leaves the process.
+ */
+
+const DOCUMENT_ID = "A".repeat(43);
+
+test("documents: a malformed document id fails the request rather than being ignored", async () => {
+  const mock = mockUpstream(() => sse({ type: "response.completed" }));
+  try {
+    await withKey(async () => {
+      for (const documentIds of [
+        ["../../etc/passwd"],
+        ["short"],
+        [""],
+        ["a/b"],
+        [42],
+        [null],
+        "not-an-array",
+        [{}],
+      ]) {
+        const response = await POST(
+          postRequest({
+            provider: "gpt",
+            messages: [{ role: "user", content: "what is the total?" }],
+            conversationId: "conv-1",
+            documentIds,
+          }),
+        );
+        assert.equal(response.status, 400, JSON.stringify(documentIds));
+        const payload = (await response.json()) as { code?: string };
+        assert.equal(payload.code, "BAD_REQUEST");
+      }
+    });
+    assert.equal(mock.calls.length, 0, "a malformed reference must never reach a provider");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("documents: more ids than the per-conversation cap is refused", async () => {
+  const mock = mockUpstream(() => sse({ type: "response.completed" }));
+  try {
+    await withKey(async () => {
+      const documentIds = Array.from({ length: 11 }, (_, i) =>
+        `${String.fromCharCode(66 + i)}`.repeat(43),
+      );
+      const response = await POST(
+        postRequest({
+          provider: "gpt",
+          messages: [{ role: "user", content: "hi" }],
+          conversationId: "conv-1",
+          documentIds,
+        }),
+      );
+      assert.equal(response.status, 400);
+    });
+    assert.equal(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("documents: ids without a conversation id are refused, since nothing could authorise them", async () => {
+  const mock = mockUpstream(() => sse({ type: "response.completed" }));
+  try {
+    await withKey(async () => {
+      for (const conversationId of [undefined, "", "../../x", "has space", "x".repeat(129)]) {
+        const response = await POST(
+          postRequest({
+            provider: "gpt",
+            messages: [{ role: "user", content: "hi" }],
+            ...(conversationId === undefined ? {} : { conversationId }),
+            documentIds: [DOCUMENT_ID],
+          }),
+        );
+        assert.equal(response.status, 400, String(conversationId));
+      }
+    });
+    assert.equal(mock.calls.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("documents: files that cannot be read FAIL the turn instead of answering ungrounded", async () => {
+  const mock = mockUpstream(() => sse({ type: "response.completed" }));
+  try {
+    await withKey(async () => {
+      const response = await POST(
+        postRequest({
+          provider: "gpt",
+          messages: [{ role: "user", content: "what does the contract say about termination?" }],
+          conversationId: "conv-1",
+          documentIds: [DOCUMENT_ID],
+        }),
+      );
+      assert.equal(response.status, 502);
+      const payload = (await response.json()) as { code?: string };
+      assert.equal(payload.code, "DOCUMENT_SEARCH_FAILED");
+    });
+    // The point of the whole error code: the model was not asked a question
+    // about documents nobody could read.
+    assert.equal(mock.calls.length, 0, "the provider must not be called when retrieval found nothing");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("documents: an empty documentIds array behaves exactly like no documents at all", async () => {
+  const mock = mockUpstream(() =>
+    sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
+  );
+  try {
+    await withKey(async () => {
+      const response = await POST(
+        postRequest({
+          provider: "gpt",
+          messages: [{ role: "user", content: "hi" }],
+          conversationId: "conv-1",
+          documentIds: [],
+        }),
+      );
+      assert.equal(response.status, 200);
+      const body = JSON.parse(String(mock.calls[0].body));
+      // No retrieval ran, so no instructions were added: byte-for-byte the
+      // request this endpoint sent before documents existed.
+      assert.deepEqual(body.input, [{ role: "user", content: "hi" }]);
+      assert.equal(body.instructions, undefined);
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("documents: a conversation with no files sends no document fields and is unaffected", async () => {
+  const mock = mockUpstream(() =>
+    sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
+  );
+  try {
+    await withKey(async () => {
+      const response = await POST(
+        postRequest({ provider: "gpt", messages: [{ role: "user", content: "hi" }] }),
+      );
+      assert.equal(response.status, 200);
+      const events = await readEvents(response);
+      assert.ok(events.some((e) => e.type === "done"));
     });
   } finally {
     mock.restore();

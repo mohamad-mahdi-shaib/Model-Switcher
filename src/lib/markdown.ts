@@ -41,6 +41,25 @@ export type BlockNode =
       runs?: TextRun[];
     }
   | { type: "list"; ordered: boolean; start: number; items: InlineNode[][] }
+  /**
+   * Project 4: a GitHub-style pipe table.
+   *
+   * Added because a table is the one answer shape this app could render
+   * only as mangled prose -- and the shape most worth exporting: "compare
+   * these two contracts" or "summarise this spreadsheet" produces a table,
+   * and a table is what a user then wants in Excel or Word. Parsing it into
+   * real cells is what lets `file-generation.ts` write real cells rather
+   * than a wall of pipes.
+   *
+   * `align` follows the separator row (:---, :---:, ---:) and is null where
+   * the row did not specify one.
+   */
+  | {
+      type: "table";
+      header: InlineNode[][];
+      rows: InlineNode[][][];
+      align: ("left" | "center" | "right" | null)[];
+    }
   | { type: "quote"; children: InlineNode[] }
   | { type: "hr" };
 
@@ -116,6 +135,51 @@ function parseInline(input: string): InlineNode[] {
   return out;
 }
 
+/** Splits one pipe row into raw cell strings, tolerating optional outer pipes. */
+function splitRow(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  // A pipe inside inline code or escaped with a backslash is content, not a
+  // delimiter -- splitting naively would cut a cell in half.
+  const cells: string[] = [];
+  let buffer = "";
+  let inCode = false;
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
+    if (char === "\\" && trimmed[index + 1] === "|") {
+      buffer += "|";
+      index += 1;
+      continue;
+    }
+    if (char === "`") inCode = !inCode;
+    if (char === "|" && !inCode) {
+      cells.push(buffer.trim());
+      buffer = "";
+      continue;
+    }
+    buffer += char;
+  }
+  cells.push(buffer.trim());
+  return cells;
+}
+
+/** `| --- | :---: |` and friends. */
+function isSeparatorRow(line: string): boolean {
+  if (!line.includes("-") || !line.includes("|")) return false;
+  return splitRow(line).every((cell) => /^:?-{1,}:?$/.test(cell.trim()));
+}
+
+function parseAlignment(line: string, columns: number): ("left" | "center" | "right" | null)[] {
+  const cells = splitRow(line);
+  const align: ("left" | "center" | "right" | null)[] = [];
+  for (let index = 0; index < columns; index += 1) {
+    const cell = (cells[index] ?? "").trim();
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    align.push(left && right ? "center" : right ? "right" : left ? "left" : null);
+  }
+  return align;
+}
+
 export function parseMarkdown(src: string): BlockNode[] {
   const lines = src.replace(/\r\n?/g, "\n").split("\n");
   const blocks: BlockNode[] = [];
@@ -178,6 +242,31 @@ export function parseMarkdown(src: string): BlockNode[] {
         i += 1;
       }
       blocks.push({ type: "quote", children: parseInline(parts.join(" ")) });
+      continue;
+    }
+
+    /**
+     * A table needs a header row AND a separator row to be a table at all.
+     * Requiring both is what keeps an ordinary sentence containing a pipe
+     * ("a | b") from being swallowed as a one-column table -- and, during
+     * streaming, a half-arrived table stays a paragraph until its separator
+     * line lands, rather than flickering through a bogus shape.
+     */
+    if (line.includes("|") && i + 1 < lines.length && isSeparatorRow(lines[i + 1])) {
+      const header = splitRow(line);
+      const align = parseAlignment(lines[i + 1], header.length);
+      i += 2;
+      const rows: InlineNode[][][] = [];
+      while (i < lines.length && lines[i].trim() && lines[i].includes("|")) {
+        const cells = splitRow(lines[i]).map(parseInline);
+        // Ragged rows are padded rather than dropped: a model that emits a
+        // short row has still said something, and losing it silently would
+        // be worse than an empty cell.
+        while (cells.length < header.length) cells.push([]);
+        rows.push(cells.slice(0, header.length));
+        i += 1;
+      }
+      blocks.push({ type: "table", header: header.map(parseInline), align, rows });
       continue;
     }
 

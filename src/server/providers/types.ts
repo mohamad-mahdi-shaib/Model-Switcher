@@ -114,10 +114,22 @@ export type ChatProvider = {
    * Edit-and-resend, since all three call this the same way a fresh send
    * does; there is no separate "preferences at the time this was
    * originally sent" concept.
+   *
+   * `documentContext` (Project 4), when present, is the already-rendered
+   * block of passages retrieved from the user's uploaded files for THIS
+   * turn's question. Adapters pass it through the same shared
+   * `buildSystemInstructionText()` as preferences and must not interpret it:
+   * the retrieval, the citation instructions and the untrusted-content
+   * fencing are all decided in one place (`@/server/documents/retrieve.ts`),
+   * so every provider sees identical wording and a model switch cannot
+   * change how a document is grounded. An adapter that ignored it would
+   * answer from general knowledge while the UI claimed the files were
+   * searched -- so it is part of the contract, not an optional nicety.
    */
   stream(
     messages: readonly WireMessage[],
     signal: AbortSignal,
     preferences?: Preferences,
+    documentContext?: string,
   ): Promise<AsyncIterable<ProviderChunk>>;
 };

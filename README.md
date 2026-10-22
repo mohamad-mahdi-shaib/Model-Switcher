@@ -1,8 +1,21 @@
 # AI Workspace — Creative Model-Switcher Interface
 
-A glassmorphic AI chat interface built for the Numbase Project 1 brief. Next.js
-16 + TypeScript + Tailwind v4, with Gemini and OpenAI behind a provider-neutral
-abstraction layer.
+A glassmorphic AI workspace: multi-model chat, image understanding and
+generation, and a document workspace that reads your files, answers questions
+about them with citations, extracts structured data, and writes real Word,
+Excel and PDF files. Next.js 16 + TypeScript + Tailwind v4, with every provider
+behind one provider-neutral abstraction layer.
+
+**Verification status, stated precisely.** Chat against Gemini and OpenAI is
+verified against the live APIs. The document workspace -- parsing, chunking,
+embedding, storage, retrieval, extraction and file generation -- is verified by
+424 automated tests and 344 real-browser checks, including round trips through
+the actual file formats and a full store round trip against a stand-in blob
+service, **plus a live end-to-end run** (`tests/live/verify-documents-live.mjs`,
+19/19) in which a real PDF invoice was uploaded, embedded through Gemini,
+stored in Vercel Blob, extracted into validated fields, and then correctly
+answered a question whose answer exists only on page 2 -- citing page 2.
+See `PROJECT4_PROGRESS.md` for what that run caught.
 
 **Both providers are now verified against their live APIs.** An end-to-end
 acceptance run on 2026-09-21 streamed real answers from OpenAI and Gemini in one
@@ -21,6 +34,21 @@ collapsible from the same control.
 ## Features
 
 Everything listed here is implemented and reachable in the running app.
+
+**Documents** (see "Document workspace" for how each of these works)
+- Upload PDF, DOCX, XLSX, CSV, Markdown, text and 25 code extensions. Parsed
+  server-side into sections that carry a real citation (`p. 4`,
+  `Sheet1!A12:F31`, `lines 120-168`).
+- Ask questions across the uploaded files and get grounded answers that cite
+  the filename and page, sheet or line range they came from.
+- Compare several files in one question; a per-document quota keeps every file
+  represented instead of letting one dominate the context.
+- Summaries take a different retrieval path from questions, and say they are
+  based on sampled excerpts.
+- Extract structured data (Invoice, Contract) validated against a Zod schema,
+  with the arithmetic checked and every discrepancy shown. Download as JSON or
+  a real `.xlsx`.
+- Save any answer as a real `.docx`, `.pdf`, `.xlsx`, `.md`, or source file.
 
 **Chat**
 - Streaming replies over NDJSON, rendered progressively with a paced reveal
@@ -113,14 +141,16 @@ variables in the running process.
 
 | Name | Required | Purpose |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | for Gemini | Server-side Gemini credential. Never sent to the browser. |
+| `GEMINI_API_KEY` | for Gemini, document search and extraction | Server-side Gemini credential. Never sent to the browser. Also powers document embeddings and structured extraction — see "Document workspace"; OpenRouter serves no embedding model, so there is nothing else to use. |
 | `GEMINI_MODEL` | no | Defaults to `gemini-3.6-flash` (stable, free tier). |
 | `OPENAI_API_KEY` | for OpenAI | Server-side OpenAI credential. Requires a funded account. |
 | `OPENAI_MODEL` | no | Defaults to `gpt-5.6-luna`, the cost-optimised tier. See "Which OpenAI model" below before overriding it. |
 | `OPENROUTER_API_KEY` | for DeepSeek V3.1 and all image generation | One key serves the OpenRouter chat model and the image model. Create one at <https://openrouter.ai/keys>; it needs credit, as no image-generation model is free. |
 | `OPENROUTER_IMAGE_MODEL` | no | Defaults to `google/gemini-2.5-flash-image`. |
 | `OPENROUTER_SITE_URL` / `OPENROUTER_SITE_NAME` | no | Optional attribution headers for OpenRouter's public rankings. Not secrets. |
-| `BLOB_READ_WRITE_TOKEN` | no | Vercel Blob. When set, generated images are stored and the conversation keeps a short URL instead of inline base64. Without it the app still works; images live in the browser only. |
+| `BLOB_READ_WRITE_TOKEN` | for the document workspace | Vercel Blob. Stores parsed documents and their embeddings, and lets generated images keep a short URL instead of inline base64. Without it, chat and image generation still work (images live in the browser only) and uploaded documents fall back to the pre-existing inline attachment path, losing document *search*. |
+| `GEMINI_EMBEDDING_MODEL` | no | Defaults to `gemini-embedding-001` at 768 dimensions. Used for document indexing and search. `text-embedding-004` is retired and 404s; `gemini-embedding-2` does not batch (it returns one vector for a batch of several), so it must not be used here. |
+| `GEMINI_EXTRACTION_MODEL` | no | Defaults to `GEMINI_MODEL`, then `gemini-3.6-flash`. Used for structured extraction only. |
 
 A provider is offered in the UI only when an adapter exists **and** the server
 reports its key present. "Configured" means exactly that: a key is present. It
@@ -212,13 +242,24 @@ npm run build && npm start     # http://localhost:3000
 ```
 src/
   app/
-    api/chat/route.ts        provider-neutral endpoint: validate -> dispatch -> NDJSON
+    api/chat/route.ts        provider-neutral endpoint: validate -> retrieve -> dispatch -> NDJSON
+    api/documents/route.ts   upload + index, delete, capability probe
+    api/extract/route.ts     structured extraction against one document
+    api/images/route.ts      image generation
     page.tsx, layout.tsx
   server/providers/          SERVER ONLY
     types.ts                 ChatProvider contract, ProviderError
     gemini.ts                the only file importing @google/genai
     openai.ts                the only file that knows the OpenAI wire format
+    openrouter.ts            one adapter for every OpenRouter chat model
     registry.ts              id -> adapter dispatch
+  server/documents/          SERVER ONLY
+    parse.ts                 PDF/DOCX/XLSX/CSV/text/code -> cited sections
+    embed.ts                 citation-preserving chunking + Gemini embeddings
+    store.ts                 blob-backed store; the capability + binding check
+    retrieve.ts              similarity search, overview sampling, prompt fencing
+  server/extract/run.ts      Zod -> JSON Schema -> constrained decode -> validate
+  server/rate-limit.ts       per-client sliding window for the costly routes
   components/workspace/
     WorkspaceLayout.tsx      state container + composition root (owns ALL state)
     AppShell.tsx             the layout itself: header / sidebar / main slots
@@ -228,7 +269,10 @@ src/
     MessageComposer.tsx      the sticky composer at the bottom of main
     ProviderMenu.tsx         provider switcher + switch confirmation dialog
     SettingsPanel.tsx        the one Settings overlay (Appearance lives here)
-    Markdown.tsx, AttachmentTray.tsx
+    DocumentTray.tsx         the conversation's searchable files
+    ExtractionPanel.tsx      schema picker, result table, JSON/XLSX download
+    SaveAnswerMenu.tsx       save any answer as docx/pdf/xlsx/md/code
+    Markdown.tsx, AttachmentTray.tsx, GeneratedImages.tsx
   lib/
     chat.ts                  shared contract (server + client)
     use-conversations.ts     conversation + streaming state machine
@@ -238,6 +282,11 @@ src/
     providers.ts             client provider registry + identity
     backgrounds.ts           2 wallpapers, 1 glass style, ambient orb data
     limits.ts                shared input/conversation length limits (client + server)
+    documents.ts             document types, limits, extension table (client + server)
+    document-upload.ts       browser half of upload/delete; the capability probe
+    extraction.ts            the Zod schemas, the self-audit, display metadata
+    extraction-download.ts   JSON + XLSX for an extraction result
+    file-generation.ts       answer AST -> real .docx / .pdf / .xlsx / code
 ```
 
 **Frontend / backend split.** The browser never talks to a model. It POSTs to
@@ -305,7 +354,7 @@ server-side persistence and no sync between devices.
 npm test
 ```
 
-199 tests, no network access and no model quota consumed:
+424 tests, no network access and no model quota consumed:
 
 - **Markdown** — safety (`javascript:` / `data:` links stripped, HTML never
   treated as markup) and streaming stability (every prefix of a fenced block
@@ -326,6 +375,24 @@ npm test
   length limits, at the exact boundary values.
 - **Reveal** — the streaming presentation queue, including a fenced code line
   far longer than the pacing budget revealing promptly rather than stalling.
+- **Document parsing** — real PDF, DOCX and XLSX files are generated in the
+  test (jsPDF, `docx`, SheetJS) and parsed back, so the parsers are exercised
+  against genuine file formats rather than fixtures of their output.
+- **Document isolation** — the full store round trip against a local HTTP
+  server standing in for Vercel Blob: a document stored by one conversation is
+  unreadable and undeletable from another, even by a caller holding the
+  256-bit document id.
+- **Retrieval** — the similarity floor, the per-document fairness quota that
+  keeps multi-file comparison possible, the context budget, overview detection,
+  and the prompt-injection fencing around retrieved passages.
+- **Extraction** — the Zod schema contract, the JSON Schema actually sent to
+  the model, and the arithmetic audit (line items vs subtotal, subtotal + tax
+  vs total, quantity × unit price vs line amount).
+- **File generation** — every format written and then REOPENED with the library
+  that would read it in production (mammoth, SheetJS, unpdf), including that
+  spreadsheet numbers come back as numbers and the PDF has a real text layer.
+- **Rate limiting** — per-client, per-scope budgets, the `Retry-After` a
+  refusal carries, and that one client being refused never affects another.
 
 Real-browser acceptance is driven through the Chrome DevTools Protocol, with
 all model traffic mocked at `window.fetch` and the real provider domains
@@ -343,10 +410,24 @@ node tests/browser/verify-responsive.mjs     # 100 checks — 7 viewports
 node tests/browser/verify-search.mjs         #  16 checks — conversation search
 node tests/browser/verify-dialog-hit-testing.mjs   # 8 checks — real pointer hit-testing
 node tests/browser/verify-network-isolation.mjs    # 4 checks — fail-closed proof
+node tests/browser/verify-documents.mjs      #  44 checks — upload, tray, RAG wiring, extraction
+node tests/browser/verify-files.mjs          #  26 checks — tables and real file downloads
 ```
 
-All six pass against the current build (274 checks total). See `docs/requirements-audit.md` for the requirement-by-requirement
-evidence.
+All eight pass against the current build (**344 checks total**). `/api/documents`
+and `/api/extract` are intercepted at Chrome's own network layer alongside
+`/api/chat`, so a browser run can never spend embedding or extraction quota;
+each run asserts the interception count is 0.
+
+One further check runs against the built artefact rather than the browser:
+
+```bash
+npm run build && node tests/verify-no-secret-leak.mjs
+```
+
+It searches the real client bundle for the real values in `.env.local` and
+reports variable names and counts only — never a value. See
+`docs/requirements-audit.md` for the requirement-by-requirement evidence.
 
 ---
 
@@ -539,6 +620,202 @@ To create the store yourself: `vercel blob create-store <name> --access public
 --yes` links it to the project and injects the token automatically — the value
 is generated by Vercel and never needs to be copied by hand.
 
+## Document workspace
+
+Upload a file, ask questions about it, pull structured data out of it, and save
+any answer as a real file. Everything here is server-side except file
+generation, and nothing is simulated: files are genuinely parsed, genuinely
+embedded, genuinely searched, and the documents produced genuinely open in
+Word, Excel and a PDF reader.
+
+### What can be uploaded
+
+| Kind | Extensions | Parser | What a citation looks like |
+| --- | --- | --- | --- |
+| PDF | `.pdf` | `unpdf`, page by page | `p. 4` |
+| Word | `.docx` | `mammoth` → HTML, split on headings | the heading the text sits under |
+| Spreadsheet | `.xlsx` `.xlsm` | SheetJS, header row repeated per block | `Sheet1!A12:F31` |
+| Delimited | `.csv` `.tsv` | SheetJS | `Sheet1!A12:F31` |
+| Text / Markdown | `.txt` `.log` `.md` | line ranges | `lines 120-168` |
+| Code | 25 extensions (`.ts` `.py` `.go` `.rs` `.sql` …) | line ranges | `lines 120-168` |
+
+Limits: 4 MB a file (under Vercel's ~4.5 MB request cap), 10 files a
+conversation, 1.5 M characters of extracted text a file, 5,000 rows a sheet.
+A file that hits a limit is still accepted and the truncation is reported —
+a partial read is only honest if it says it is partial.
+
+The file type is decided by **sniffing the bytes**, never by the extension or
+the browser's claimed MIME type: a PNG renamed `report.pdf` is refused rather
+than handed to a PDF parser. A PDF with no extractable text (a scan) returns a
+422 that says so, instead of an empty document that looks successfully read.
+
+### Retrieval (RAG)
+
+Parsing produces sections that already carry a real citation. Those are chunked
+to about 6,000 characters, and a chunk is only ever merged with a neighbour
+that shares its citation — two halves of page 4 may merge, page 4 and page 5
+may not — so every chunk stays truthfully citable.
+
+Embeddings are Gemini `gemini-embedding-001` at 768 dimensions, batched 50 at a time, with
+`taskType` set asymmetrically (`RETRIEVAL_DOCUMENT` at ingest,
+`RETRIEVAL_QUERY` at search) because Gemini's retrieval embeddings are
+asymmetric. Vectors are unit-normalised at write time, so similarity at search
+time is a plain dot product.
+
+**Why Gemini and not OpenRouter**, given everything else routes through
+OpenRouter: OpenRouter serves **no embedding models at all**. A read of its
+public catalogue (`GET /api/v1/models`, 468 models) returned zero with
+embedding output. `@google/genai` is already a dependency and `GEMINI_API_KEY`
+is already configured, so embeddings add no new credential and no new service.
+
+Search is **exact (brute-force) cosine similarity**, not an approximate index.
+That is a deliberate fit to the scale: a conversation holds at most 10 files,
+so a query compares a few thousand 768-dimension unit vectors. The honest name
+for this is *a persistent vector store with exact search*. It is not pgvector,
+and this README does not call it that.
+
+Two retrieval strategies, chosen by the question:
+
+- **Search** for a specific question. Top-k by similarity above a 0.35 floor,
+  with a **per-document quota** applied before the budget is spent — without
+  it, "how do these two contracts differ?" comes back with eight passages from
+  whichever file happened to score highest, and the comparison is impossible.
+- **Overview** for "summarise this", "what are the main points", "compare
+  these". Similarity search is at its *worst* here and fails invisibly: the
+  embedding of a content-free query lands near nothing in particular, returns
+  an effectively arbitrary slice, and the model summarises that as if it were
+  the whole file. Those requests instead take an even stride across each
+  document, always including its opening chunk, and the prompt states plainly
+  that the answer is based on sampled excerpts. It also skips the query
+  embedding entirely.
+
+Retrieval runs on **every turn**, against that turn's own question — which is
+what makes a follow-up ("and what does clause 9 say?") search the file again
+rather than reuse what was relevant to the first question. It happens in the
+route, provider-neutrally, so **grounding survives a model switch**: Gemini,
+GPT and the OpenRouter models receive identical passages and identical citation
+instructions.
+
+If files are attached and the search fails, the turn fails with
+`DOCUMENT_SEARCH_FAILED` and **the provider is never called**. Answering a
+question about the user's files while silently skipping the files produces a
+confident reply drawn from general knowledge that looks like it came from the
+document — the worst available outcome.
+
+### Access control, and its honest limits
+
+This app has no accounts: conversations live in the browser and every request
+is anonymous. So "may this caller read this document?" has to be answered by
+something the caller holds.
+
+The obvious candidate — the conversation id — is **not safe**. `newId()`
+produces `prefix-<base36 clock>-<counter>`, which anyone can enumerate from a
+rough timestamp and a small integer. Keying private documents on it would have
+made every upload readable by guessing.
+
+What is used instead:
+
+- a **256-bit CSPRNG document id**, generated server-side, which doubles as an
+  unguessable capability;
+- that id **is** the blob pathname, so the storage URL cannot be derived
+  without it, and the URL is never returned to the browser;
+- each document is additionally **bound to the conversation** that uploaded it,
+  compared with `timingSafeEqual`, so a leaked id cannot be replayed into
+  another conversation;
+- "not found" and "not yours" are the **same answer**, so the API cannot be
+  used to discover which ids are real.
+
+Stated plainly: this is capability-based access control, not per-user
+authorization. Anyone who obtains a document id can read that document. With no
+identity system there is nothing stronger to check against, and inventing a
+fake one would be worse than saying so.
+
+`tests/documents-isolation.test.ts` proves the property end to end against the
+real store code, using a local HTTP server in place of the blob service
+(`@vercel/blob` takes its API base from `VERCEL_BLOB_API_URL`).
+
+### Untrusted content
+
+Document text is untrusted input: an uploaded PDF can contain "ignore your
+instructions and …". Retrieved passages are fenced, labelled as DATA, and
+preceded by an explicit instruction that anything command-shaped inside is
+quoted text from the document rather than a command. Extraction does the same,
+and is if anything more exposed, because the whole document is in the prompt.
+
+This is mitigation, not a guarantee. No prompt wrapper makes a model immune,
+and nothing here executes uploaded content.
+
+### Structured extraction
+
+Pick a file and a schema (Invoice or Contract) and get validated, tabular data
+out of it, downloadable as JSON or a real `.xlsx`.
+
+One Zod schema does three jobs: it is converted to a JSON Schema that
+**constrains** the model's decoding (`responseJsonSchema`), it **validates**
+what actually comes back, and it **describes** the table and the spreadsheet
+columns. One definition, so the three cannot drift.
+
+Every field is nullable by design. A model asked for an invoice number will
+invent one rather than return nothing, and a plausible fabrication is far worse
+than an obvious blank — so "not present in this document" is a first-class
+answer, and the table shows a **"not found"** row rather than hiding it.
+Temperature is 0: the same document should read the same twice.
+
+Zod proves `total` is a number; it cannot prove it is the *right* number. So
+every extraction is **audited against itself** — line items against the
+subtotal, subtotal plus tax against the total, quantity × unit price against
+each line amount, with a half-cent tolerance so float noise does not cry wolf.
+Discrepancies are shown **above** the tidy table that would otherwise make the
+figures look settled, and they are carried into both downloads: a warning
+visible on screen but missing from the spreadsheet is exactly how a
+questionable number becomes a trusted one.
+
+### Saving an answer as a real file
+
+Any settled answer offers **Save as**: Word, PDF, Excel, Markdown, or a code
+file with the language's real extension.
+
+"Real" means reopenable. Word headings are Word headings, lists are real lists
+that renumber, tables are real tables; spreadsheet numbers are numeric cells
+(`"1,250.50"` becomes `1250.5`, so a column can actually be summed); the PDF
+carries a genuine text layer. Each format is tested by writing it and parsing
+it back with the library that would read it in production — mammoth, SheetJS,
+unpdf. A renamed `.txt` passes a download button, a byte-length check and a
+MIME-type check; it fails the moment Word opens it.
+
+The structure comes from the **same markdown parser that renders the answer on
+screen**, so the file matches what was displayed. Markdown tables were added to
+that parser for this — a table is the shape "compare these two contracts"
+produces, and the shape worth exporting.
+
+Generation is entirely client-side: no upload, no storage, no cost. The heavy
+libraries are dynamically imported, so they are fetched only when someone
+actually saves something.
+
+One honest limitation: jsPDF's built-in fonts are WinAnsi-encoded, so Arabic,
+CJK and Cyrillic cannot be rendered. Rather than producing quietly mangled
+output, **PDF is disabled for those answers with the reason shown**, pointing
+at Word, which handles Unicode natively. (The separate conversation export
+chose the opposite trade — rasterising via html2canvas — because it has to
+handle Arabic and does not need a text layer.)
+
+### Rate limiting
+
+All four routes apply a per-client sliding window before reading the request
+body, so a refused request costs nothing: 60/minute for chat, 12 per 5 minutes
+for uploads, 20 per 5 minutes for extraction, 12 per 5 minutes for images.
+
+What this is, plainly: an **in-memory** limiter held in whichever instance
+serves the request. On Vercel that means per instance, and it resets on a cold
+start. It is a speed bump against runaway clients, retry storms and casual
+abuse of an unauthenticated endpoint — **not a security boundary**. The honest
+alternative is a shared store (Upstash, Redis), deliberately not added here: it
+would introduce a service, a credential and a failure mode for a single-user
+portfolio app, and pretending an in-memory counter is a distributed limiter
+would be worse than stating what it is.
+
+---
+
 ## Switching providers
 
 Switching is silent while a conversation is empty — there is no context to
@@ -631,6 +908,31 @@ time, so an existing deployment keeps the values it was built with.
 - **Reference images come from the current turn.** The tool can edit or vary an
   image attached to the message being sent; varying an image generated earlier
   goes through the Make a variation button rather than the model.
+- **Document upload and extraction are not yet live-verified.** Every layer is
+  tested locally -- real PDF/DOCX/XLSX parsed and reopened, the store round
+  trip, the retrieval maths, the JSON Schema actually sent to the model -- but
+  no upload has gone through the live Gemini embedding endpoint and no
+  extraction through the live model.
+- **Document access control is capability-based, not per-user.** Anyone who
+  obtains a document id can read that document. There are no accounts to check
+  against; see "Access control, and its honest limits".
+- **Rate limiting is in-memory.** Per instance, reset by a cold start. A speed
+  bump, not a security boundary.
+- **The per-conversation file cap is enforced client-side.** The server has no
+  list of a conversation's documents to count, so the 10-file limit is a UI
+  limit; the upload rate limit (12 per 5 minutes) is what actually bounds
+  server-side cost.
+- **Extraction reads the first ~120,000 characters.** A longer document is
+  still extracted, and the result says it was read only in part.
+- **PDF export cannot render non-Latin scripts.** jsPDF's built-in fonts are
+  WinAnsi, so for Arabic, CJK or Cyrillic answers the PDF option is disabled
+  with the reason shown and Word is offered instead.
+- **Scanned PDFs are detected, not OCR'd.** A PDF with no text layer is
+  reported as having no extractable text rather than silently indexed empty.
+  There is no OCR in this app.
+- **Retrieval quality is not benchmarked.** The similarity floor (0.35), top-k
+  (8) and chunk size (~6,000 characters) are reasoned defaults, not values
+  tuned against a labelled evaluation set.
 - **History is per-browser.** Conversations live in `localStorage` only — there
   is no account, no server-side persistence and no sync between devices or
   browsers. Clearing site data clears them. Settings behave the same way.
@@ -642,5 +944,5 @@ time, so an existing deployment keeps the values it was built with.
 - **Mobile out of scope.** The sidebar is hidden below the `md` breakpoint. Not something the brief asked for or planned around — it simply never mentions mobile.
 - **Input and conversation limits.** Messages over 16,000 characters are refused client-side before they ever enter history, with the actual limit named; a conversation reaching 50 messages surfaces the real cap and offers a working path to a new conversation.
 - **Markdown subset.** Paragraphs, headings, lists, inline code, fenced code,
-  links and blockquotes. No tables, images or footnotes.
+  links, blockquotes and GitHub-style pipe tables. No images or footnotes.
 - **History is local.** Per browser; not synced, not on the server.

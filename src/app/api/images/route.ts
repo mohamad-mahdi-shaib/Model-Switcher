@@ -9,6 +9,7 @@ import {
 } from "@/server/images/generate";
 import { ProviderError } from "@/server/providers/types";
 import { blobStorageConfigured, storeGeneratedImage } from "@/server/storage/images";
+import { checkRateLimit, rateLimitResponse } from "@/server/rate-limit";
 
 /**
  * Project 3: the image-generation endpoint.
@@ -72,6 +73,16 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // Image generation is billed per image, so a refused request must not
+  // reach the provider.
+  const limit = checkRateLimit("images", request);
+  if (!limit.ok) {
+    return rateLimitResponse(
+      limit.retryAfterSeconds,
+      `Too many image requests. Try again in ${limit.retryAfterSeconds} seconds.`,
+    );
+  }
+
   let parsed: unknown;
   try {
     parsed = await request.json();

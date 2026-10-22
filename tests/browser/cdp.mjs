@@ -61,6 +61,20 @@ const BLOCKED_URLS = [
  * for the dedicated negative test that exercises exactly this.
  */
 const API_CHAT_PATTERN = "*/api/chat*";
+/**
+ * Project 4: the same fail-closed guarantee for the document endpoint.
+ *
+ * A real POST to `/api/documents` would parse the file and then EMBED every
+ * chunk of it against the live embedding service -- the one request in this
+ * app that spends real quota without a model switch being involved. It is
+ * intercepted here for exactly the reason `/api/chat` is: if the page-level
+ * mock is ever not installed, this catches the escape, fails it, and counts
+ * it, so a browser check can prove no document request reached the real
+ * server rather than assuming it.
+ */
+const API_DOCUMENTS_PATTERN = "*/api/documents*";
+/** Project 4: extraction spends a real model call, so it is sealed too. */
+const API_EXTRACT_PATTERN = "*/api/extract*";
 
 export async function launch({ width = 1366, height = 768, reducedMotion = false } = {}) {
   const port = 9000 + Math.floor(Math.random() * 900);
@@ -131,7 +145,13 @@ export async function launch({ width = 1366, height = 768, reducedMotion = false
   await page.send("Network.setBlockedURLs", { urls: BLOCKED_URLS });
   // Finding U3: the real fail-closed guarantee. See API_CHAT_PATTERN's own
   // comment above for why blocking provider domains alone is not enough.
-  await page.send("Fetch.enable", { patterns: [{ urlPattern: API_CHAT_PATTERN }] });
+  await page.send("Fetch.enable", {
+    patterns: [
+      { urlPattern: API_CHAT_PATTERN },
+      { urlPattern: API_DOCUMENTS_PATTERN },
+      { urlPattern: API_EXTRACT_PATTERN },
+    ],
+  });
   page.on("Fetch.requestPaused", (params) => {
     apiChatInterceptCount += 1;
     page.send("Fetch.failRequest", { requestId: params.requestId, errorReason: "BlockedByClient" }).catch(() => {

@@ -221,6 +221,7 @@ export const geminiProvider: ChatProvider = {
     messages: readonly WireMessage[],
     signal: AbortSignal,
     preferences?: Preferences,
+    documentContext?: string,
   ): Promise<AsyncIterable<ProviderChunk>> {
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (!apiKey) throw new ProviderError("MISSING_KEY");
@@ -257,7 +258,7 @@ export const geminiProvider: ChatProvider = {
     // part of the conversation itself. Omitted entirely when there is
     // nothing to say, so a request with no saved preferences is byte-for-
     // byte the same request as before this existed.
-    const systemInstruction = buildSystemInstructionText(preferences);
+    const systemInstruction = buildSystemInstructionText(preferences, documentContext);
 
     let raw: AsyncGenerator<GenerateContentResponse>;
     try {

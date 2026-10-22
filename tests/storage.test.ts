@@ -376,3 +376,115 @@ test("F2: an invalid outcome value rejects the whole payload, exactly like any o
   assert.equal(loadConversations().status, "corrupt");
   assert.equal(fake.map.get(STORAGE_KEY), payload, "rejected payloads are left untouched (F1)");
 });
+
+/* ------------------------------------- Project 4: documents on a conversation */
+
+/**
+ * Document METADATA is persisted on its conversation; the parsed text and
+ * embeddings never are (they live in blob storage, keyed by the id). These
+ * cover the additive-field contract that every optional addition to this
+ * schema has to honour: old payloads still load, and a malformed new field
+ * fails the whole payload rather than loading a chip that points nowhere.
+ */
+
+const docRef = (extra: Record<string, unknown> = {}) => ({
+  id: "A".repeat(43),
+  filename: "report.pdf",
+  kind: "pdf",
+  bytes: 120_000,
+  sections: 12,
+  meta: { chars: 48_000, truncated: false, pages: 12 },
+  warnings: [],
+  uploadedAt: 1_700_000_000_000,
+  ...extra,
+});
+
+test("P4: a conversation's uploaded documents round-trip", () => {
+  const documents = [docRef(), docRef({ id: "B".repeat(43), filename: "books.xlsx", kind: "xlsx" })];
+  assert.equal(saveConversations([conv("a", { documents })], "a"), "ok");
+  const { state, status } = loadConversations();
+  assert.equal(status, "ok");
+  assert.equal(state?.conversations[0].documents?.length, 2);
+  assert.equal(state?.conversations[0].documents?.[1].filename, "books.xlsx");
+});
+
+test("P4: a conversation saved before documents existed still loads", () => {
+  fake.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ version: 1, activeId: "a", conversations: [conv("a")] }),
+  );
+  const { state, status } = loadConversations();
+  assert.equal(status, "ok");
+  assert.equal(state?.conversations[0].documents, undefined);
+});
+
+test("P4: an empty documents array is valid", () => {
+  fake.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ version: 1, activeId: "a", conversations: [conv("a", { documents: [] })] }),
+  );
+  assert.equal(loadConversations().status, "ok");
+});
+
+test("P4: an id that could not be a real capability is corruption, not data", () => {
+  // The shape check matters: a value like this can only come from tampering
+  // or from a format that no longer exists, and silently keeping it would
+  // leave a chip in the UI that no server call could ever resolve.
+  for (const id of ["doc-1", "../../secret", "short", "A".repeat(200)]) {
+    fake.map.clear();
+    fake.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        activeId: "a",
+        conversations: [conv("a", { documents: [docRef({ id })] })],
+      }),
+    );
+    assert.equal(loadConversations().status, "corrupt", `should reject id: ${id}`);
+  }
+});
+
+test("P4: a malformed document entry fails the whole payload", () => {
+  const bad = [
+    docRef({ kind: "exe" }),
+    docRef({ meta: undefined }),
+    docRef({ meta: { truncated: false } }),
+    docRef({ meta: { chars: 1, truncated: "no" } }),
+    docRef({ sections: "12" }),
+    docRef({ warnings: "none" }),
+    docRef({ warnings: [1, 2] }),
+    docRef({ filename: 5 }),
+    docRef({ uploadedAt: "yesterday" }),
+    null,
+    "a string",
+  ];
+  for (const entry of bad) {
+    fake.map.clear();
+    fake.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        activeId: "a",
+        conversations: [conv("a", { documents: [entry] })],
+      }),
+    );
+    assert.equal(
+      loadConversations().status,
+      "corrupt",
+      `should reject entry: ${JSON.stringify(entry)}`,
+    );
+  }
+});
+
+test("P4: a document's own warnings survive, so a truncated file never looks complete", () => {
+  const documents = [
+    docRef({
+      warnings: ["Only the first 5,000 rows of Sheet1 were read."],
+      meta: { chars: 1_500_000, truncated: true, rows: 5_000 },
+    }),
+  ];
+  assert.equal(saveConversations([conv("a", { documents })], "a"), "ok");
+  const loaded = loadConversations().state?.conversations[0].documents?.[0];
+  assert.equal(loaded?.meta.truncated, true);
+  assert.match(loaded?.warnings[0] ?? "", /first 5,000 rows/);
+});

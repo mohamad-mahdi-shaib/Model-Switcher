@@ -39,6 +39,23 @@ function blockToText(node: BlockNode): string {
       return inlineToText(node.children);
     case "list":
       return node.items.map((item) => inlineToText(item)).join(". ");
+    case "table":
+      // Spoken as "column: value" pairs rather than as bare cells: a row of
+      // numbers read without its headings is unintelligible aloud.
+      return node.rows
+        .map((row) =>
+          row
+            .map((cell, index) => {
+              const heading = inlineToText(node.header[index] ?? []);
+              const value = inlineToText(cell);
+              if (!value) return "";
+              return heading ? `${heading}: ${value}` : value;
+            })
+            .filter(Boolean)
+            .join(", "),
+        )
+        .filter(Boolean)
+        .join(". ");
     case "code":
     case "hr":
       return "";
