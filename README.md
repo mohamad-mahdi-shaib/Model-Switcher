@@ -908,11 +908,21 @@ time, so an existing deployment keeps the values it was built with.
 - **Reference images come from the current turn.** The tool can edit or vary an
   image attached to the message being sent; varying an image generated earlier
   goes through the Make a variation button rather than the model.
-- **Document upload and extraction are not yet live-verified.** Every layer is
-  tested locally -- real PDF/DOCX/XLSX parsed and reopened, the store round
-  trip, the retrieval maths, the JSON Schema actually sent to the model -- but
-  no upload has gone through the live Gemini embedding endpoint and no
-  extraction through the live model.
+- **Live verification covers the main paths, not every path.** Upload,
+  embedding, storage, retrieval, multi-file comparison, summaries and Invoice
+  extraction have all been run against the live services, locally and in
+  production. What has NOT: the Contract extraction schema has never been run
+  against a model; no document near the 4 MB / 1.5 M character ceilings has
+  been uploaded; and the live error paths (invalid key, exhausted quota) are
+  still only verified against mocked responses, since provoking them for real
+  means damaging the account.
+- **A mid-stream failure cannot be retried.** The route retries an upstream
+  failure that happens before the first token, but once streaming has begun
+  tokens are already on screen and there is nothing to retry into: the answer
+  stops where it stopped and an error notice appears. Observed twice against
+  live Gemini (an extraction overload, and a chat stream that died 19.9 s in);
+  neither was rate limiting, and both succeeded when retried by hand. Retrying
+  is left to the user, via the existing Retry control.
 - **Document access control is capability-based, not per-user.** Anyone who
   obtains a document id can read that document. There are no accounts to check
   against; see "Access control, and its honest limits".

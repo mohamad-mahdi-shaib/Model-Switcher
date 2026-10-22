@@ -17,8 +17,10 @@ was actually run, and anything not verified is named as not verified.
 | 5 | Real file generation (DOCX/XLSX/PDF/code) | done |
 | 6 | Rate limits, isolation tests, full regression | done |
 | 7 | Documentation | done |
-| — | Live verification against the real embedding/extraction endpoints | **held, awaiting approval** |
-| — | Commit, push, deploy | **held, awaiting approval** |
+| — | Live verification against the real embedding/extraction endpoints | done — 19/19 |
+| — | Live verification of multi-file comparison | done — 20/20 |
+| — | Commit and push | done |
+| — | Deploy to Vercel production | done — verified live |
 
 ---
 
@@ -65,7 +67,7 @@ back — the parsers meet real file formats, not fixtures of their own output.
 - Chunks are ~6,000 characters, split only on paragraph boundaries, and merged
   with a neighbour **only when the citation matches**, so a merged chunk stays
   truthfully citable.
-- Embeddings: Gemini `text-embedding-004`, batched 50, `taskType` asymmetric
+- Embeddings: Gemini `gemini-embedding-001` at 768 dimensions, batched 50, `taskType` asymmetric
   (`RETRIEVAL_DOCUMENT` / `RETRIEVAL_QUERY`), unit-normalised at write time so
   search is a dot product.
 - Storage: Vercel Blob, keyed by a 256-bit CSPRNG id.
@@ -223,6 +225,28 @@ first N dimensions and return a confident-looking number.
 
 ---
 
+## Multi-file comparison — verified live, 20/20
+
+`node tests/live/verify-comparison-live.mjs`. Two documents in two formats in
+one conversation: a real PDF read by `unpdf` (cited by page) and a real DOCX
+read by `mammoth` (cited by heading), differing in every checked value.
+
+All six distinguishing facts were found and attributed to the correct file —
+30 vs 90 days notice, England and Wales vs Delaware, Net 30 vs Net 60 — each
+cited to the right location type for its format. The summary question covered
+both files and declared itself based on sampled excerpts.
+
+The server log is the direct evidence that the per-document quota did its job:
+every comparison ran `{ mode: 'search', documents: 2, grounded: true }` and
+every summary `{ mode: 'overview', documents: 2, grounded: true }`.
+
+The test's own first attribution check was wrong and had to be replaced: it
+compared first-occurrence distances between a value and each filename, which
+measures phrasing rather than attribution. The replacement is line-scoped and
+was validated against deliberately swapped inputs before being relied on.
+
+---
+
 ## What is NOT verified
 
 - **Retrieval quality is not benchmarked.** The similarity floor (0.35), top-k
@@ -231,6 +255,14 @@ first N dimensions and return a confident-looking number.
 - **No OCR.** Scanned PDFs are detected and reported, not read.
 - **Rate limiting is per instance.** It does not survive a cold start and is not
   shared across instances.
+- **A mid-stream provider failure cannot be retried.** The route retries a
+  failure that happens BEFORE the first token, but once streaming has begun
+  tokens are already delivered and there is nothing to retry into — the user
+  sees a partial answer with an error notice. Observed twice against live
+  Gemini: one extraction overload in production, and one chat stream that died
+  19.9 s in during comparison testing. Neither was rate limiting (no 429, no
+  quota wording in the provider message); both succeeded on a manual retry.
+  There is no automatic retry on either path.
 
 ---
 
