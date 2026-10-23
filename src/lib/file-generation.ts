@@ -159,24 +159,84 @@ export function findCodeBlocks(blocks: readonly BlockNode[]): Extract<BlockNode,
 }
 
 /**
- * Characters jsPDF's built-in fonts cannot represent.
- *
- * The standard PDF fonts are WinAnsi-encoded: Arabic, Hebrew, CJK, Greek and
- * Cyrillic come out as blanks or mojibake. This app is used with Arabic (the
- * conversation export chose a rasterising path precisely for that reason --
- * see `conversation-pdf.ts`), so rather than producing a quietly mangled PDF,
- * the caller is told to use DOCX, which is Unicode throughout.
- *
- * Detecting it is better than either silently failing or dropping PDF
- * support: for the Latin text that is most of what gets exported, a real
- * searchable text layer is worth far more than a screenshot.
+ * Characters the standard PDF fonts can draw: Latin-1, Latin Extended-A/B,
+ * general punctuation (curly quotes, dashes, ellipsis) and the euro sign.
+ * The range starts at U+0000 so ordinary whitespace counts as supported.
  */
+const PDF_RENDERABLE = /[\u0000-ɏ‐-›€]/;
+
+/**
+ * Symbols worth KEEPING as an ASCII equivalent rather than dropping.
+ *
+ * These are what a model actually emits in an English report -- arrows in a
+ * flow, a tick in a checklist, a maths comparator -- and losing them silently
+ * changes what a sentence says. Anything not listed here and not renderable
+ * (emoji, CJK, Arabic) is dropped instead: lossy, but honest, because the
+ * built-in fonts genuinely cannot draw it.
+ */
+const PDF_SUBSTITUTIONS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/[→➡⇒]/g, "->"],
+  [/[←⇐]/g, "<-"],
+  [/[↔⇔]/g, "<->"],
+  [/[↑↓]/g, "|"],
+  [/[✓✔✅]/g, "[x]"],
+  [/[✗✘❌]/g, "[ ]"],
+  [/≈/g, "~"],
+  [/≤/g, "<="],
+  [/≥/g, ">="],
+  [/≠/g, "!="],
+  [/™/g, "(TM)"],
+  [/…/g, "..."],
+  [/[•●▪■]/g, "-"],
+  [/₹/g, "INR "],
+  [/¥/g, "JPY "],
+];
+
+function applySubstitutions(text: string): string {
+  let out = text;
+  for (const [pattern, replacement] of PDF_SUBSTITUTIONS) out = out.replace(pattern, replacement);
+  return out;
+}
+
+/**
+ * Makes text drawable by jsPDF's built-in fonts.
+ *
+ * Applied to every string the PDF generator writes. Without it, an answer was
+ * REFUSED a PDF outright for containing a single arrow or emoji -- which is
+ * exactly what users hit: Word, Excel and Markdown worked while PDF stayed
+ * permanently greyed out. Refusing a whole document over one stray symbol was
+ * the wrong trade. Substituting what has an ASCII equivalent, and dropping
+ * only what genuinely cannot be drawn, keeps the document.
+ */
+export function sanitiseForPdf(text: string): string {
+  return [...applySubstitutions(text)]
+    .filter((character) => PDF_RENDERABLE.test(character))
+    .join("");
+}
+
+/**
+ * The share of real content the PDF fonts cannot draw, AFTER substitution.
+ * Whitespace is ignored, so line breaks cannot dilute the measurement.
+ */
+export function unsupportedPdfShare(text: string): number {
+  const characters = [...applySubstitutions(text)].filter((character) => !/\s/.test(character));
+  if (characters.length === 0) return 0;
+  const unsupported = characters.filter((character) => !PDF_RENDERABLE.test(character)).length;
+  return unsupported / characters.length;
+}
+
+/**
+ * Above this share of undrawable content, a PDF is refused.
+ *
+ * A threshold rather than "contains anything unusual". An English report with
+ * an emoji in it loses the emoji and keeps every word -- a perfectly good
+ * PDF. An Arabic or CJK answer would lose nearly everything, and handing
+ * someone a near-empty document is worse than pointing them at Word.
+ */
+const PDF_REFUSAL_THRESHOLD = 0.1;
+
 export function hasUnsupportedPdfText(text: string): boolean {
-  // Latin-1 plus Latin Extended-A/B, general punctuation and the euro sign.
-  // The range starts at U+0000, not at a space, so ordinary whitespace
-  // (newline, tab) is INSIDE the supported set -- starting it at " " would
-  // classify every multi-line answer as unrenderable.
-  return /[^\u0000-\u024F\u2010-\u203A\u20AC]/.test(text);
+  return unsupportedPdfShare(text) > PDF_REFUSAL_THRESHOLD;
 }
 
 export type FormatAvailability = {
@@ -417,13 +477,19 @@ async function generatePdf(blocks: readonly BlockNode[], name: string): Promise<
     }
   };
 
+  /**
+   * Every string drawn into the PDF goes through `sanitiseForPdf` first, at
+   * these two writers rather than scattered through the block switch, so a
+   * future block type cannot forget it.
+   */
   const writeLines = (
-    text: string,
+    rawText: string,
     options: { size: number; style?: "normal" | "bold" | "italic"; font?: string; indent?: number },
   ) => {
     doc.setFont(options.font ?? "helvetica", options.style ?? "normal");
     doc.setFontSize(options.size);
     const indent = options.indent ?? 0;
+    const text = sanitiseForPdf(rawText);
     const lines = doc.splitTextToSize(text, WIDTH - indent) as string[];
     const lineHeight = options.size * 1.35;
     for (const line of lines) {
@@ -471,7 +537,9 @@ async function generatePdf(blocks: readonly BlockNode[], name: string): Promise<
         const drawRow = (cells: string[], bold: boolean) => {
           doc.setFont("helvetica", bold ? "bold" : "normal");
           doc.setFontSize(10);
-          const wrapped = cells.map((cell) => doc.splitTextToSize(cell, columnWidth - 8) as string[]);
+          const wrapped = cells.map(
+            (cell) => doc.splitTextToSize(sanitiseForPdf(cell), columnWidth - 8) as string[],
+          );
           const height = Math.max(...wrapped.map((lines) => lines.length)) * 13 + 6;
           ensureRoom(height);
           wrapped.forEach((lines, index) => {

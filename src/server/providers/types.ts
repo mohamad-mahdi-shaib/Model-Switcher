@@ -52,10 +52,37 @@ export class ProviderError extends Error {
   info?: ChatErrorInfo;
   /** Only transient classes should be retried by the route. */
   retryable: boolean;
+  /**
+   * The upstream HTTP status, when there was one.
+   *
+   * DIAGNOSTICS ONLY, and the reason this field exists: 401 and 403 both
+   * classify as `INVALID_KEY`, so a rejected key and a key with no access to
+   * the configured model were indistinguishable in the logs -- which are
+   * two different fixes. The route logs this; it is never sent to the
+   * browser, because the status would tell a caller things about the
+   * server's own configuration that are none of their business.
+   */
+  status?: number;
+  /**
+   * The provider's own explanation, server-side only.
+   *
+   * Classification reduces a failure to one of a closed set of codes, which
+   * is what the UI needs and all it should get. But the code alone cannot
+   * tell an operator WHICH key or WHICH model was refused, so the original
+   * sentence is kept here for the log and nowhere else. Adapters are
+   * responsible for redacting anything credential-shaped before setting it.
+   */
+  detail?: string;
 
   constructor(
     code: ChatErrorCode,
-    options: { info?: ChatErrorInfo; retryable?: boolean; cause?: unknown } = {},
+    options: {
+      info?: ChatErrorInfo;
+      retryable?: boolean;
+      cause?: unknown;
+      status?: number;
+      detail?: string;
+    } = {},
   ) {
     super(code);
     this.name = "ProviderError";
@@ -63,6 +90,8 @@ export class ProviderError extends Error {
     this.info = options.info;
     this.retryable = options.retryable ?? false;
     this.cause = options.cause;
+    this.status = options.status;
+    this.detail = options.detail;
   }
 }
 

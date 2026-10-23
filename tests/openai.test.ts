@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyOpenAi, openaiProvider, parseRetryAfter, parseSse } from "@/server/providers/openai";
+import {
+  classifyOpenAi,
+  openaiProvider,
+  parseRetryAfter,
+  parseSse,
+  redactSecrets,
+} from "@/server/providers/openai";
 import { ProviderError } from "@/server/providers/types";
 import type { WireMessage } from "@/lib/chat";
 
@@ -843,4 +849,106 @@ test("F2: an empty answer still yields exactly one outcome:complete chunk", asyn
   } finally {
     mock.restore();
   }
+});
+
+/* --------------------------------- diagnostics carried, never leaked ----- */
+
+/**
+ * The gap these close: 401 and 403 both classify as INVALID_KEY, so the log
+ * read `status: undefined, message: 'INVALID_KEY'` -- the code repeated twice
+ * -- and a rejected key was indistinguishable from a key with no access to
+ * the configured model. Those need different fixes.
+ */
+
+test("a rejected key carries its real status and the provider's own words", async () => {
+  const mock = mockUpstream(
+    () =>
+      new Response(
+        JSON.stringify({
+          error: { message: "Incorrect API key provided: sk-proj-ABCDEFGH1234", type: "invalid_request_error", code: "invalid_api_key" },
+        }),
+        { status: 401, headers: { "content-type": "application/json" } },
+      ),
+  );
+  try {
+    await withKey(async () => {
+      await assert.rejects(
+        () => openaiProvider.stream(USER, new AbortController().signal),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderError);
+          assert.equal(error.code, "INVALID_KEY");
+          assert.equal(error.status, 401, "the status that distinguishes a dead key from a forbidden model");
+          assert.match(error.detail ?? "", /HTTP 401/);
+          assert.match(error.detail ?? "", /code=invalid_api_key/);
+          return true;
+        },
+      );
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a forbidden model is distinguishable from a dead key, despite the same code", async () => {
+  const mock = mockUpstream(
+    () =>
+      new Response(
+        JSON.stringify({ error: { message: "Project does not have access to model", type: "invalid_request_error", code: "model_not_found" } }),
+        { status: 403, headers: { "content-type": "application/json" } },
+      ),
+  );
+  try {
+    await withKey(async () => {
+      await assert.rejects(
+        () => openaiProvider.stream(USER, new AbortController().signal),
+        (error: unknown) => {
+          const providerError = error as ProviderError;
+          // Same user-facing code...
+          assert.equal(providerError.code, "INVALID_KEY");
+          // ...but the log can now tell them apart.
+          assert.equal(providerError.status, 403);
+          assert.match(providerError.detail ?? "", /model_not_found/);
+          return true;
+        },
+      );
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("a partial API key echoed by the provider is REDACTED before it can be logged", async () => {
+  const mock = mockUpstream(
+    () =>
+      new Response(
+        JSON.stringify({ error: { message: "Incorrect API key provided: sk-proj-SECRETVALUE9876", type: "invalid_request_error" } }),
+        { status: 401, headers: { "content-type": "application/json" } },
+      ),
+  );
+  try {
+    await withKey(async () => {
+      await assert.rejects(
+        () => openaiProvider.stream(USER, new AbortController().signal),
+        (error: unknown) => {
+          const detail = (error as ProviderError).detail ?? "";
+          assert.doesNotMatch(detail, /SECRETVALUE/, "a key fragment must never survive into a log");
+          assert.match(detail, /sk-\[redacted\]/);
+          // The useful half of the sentence is kept.
+          assert.match(detail, /Incorrect API key provided/);
+          return true;
+        },
+      );
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("redaction covers every credential shape this app handles", () => {
+  assert.match(redactSecrets("key sk-proj-ABCD1234 here"), /sk-\[redacted\]/);
+  assert.match(redactSecrets("google AIzaSyABCD1234"), /AIza\[redacted\]/);
+  assert.match(redactSecrets("blob vercel_blob_rw_ABCD1234"), /vercel_blob_rw_\[redacted\]/);
+  assert.match(redactSecrets("Authorization: Bearer abcdef1234567890"), /Bearer \[redacted\]/);
+  // Ordinary text is untouched.
+  assert.equal(redactSecrets("HTTP 401 type=invalid_request_error"), "HTTP 401 type=invalid_request_error");
 });

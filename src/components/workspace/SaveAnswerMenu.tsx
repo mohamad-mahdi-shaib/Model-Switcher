@@ -103,25 +103,28 @@ export function SaveAnswerMenu({ text }: { text: string }) {
           className="glass-modal absolute bottom-full left-0 z-30 mb-1 w-[232px] rounded-xl p-1"
           role="menu"
         >
+          {/* Each unavailable format explains ITSELF, inline. Previously the
+              reason lived in a `title` tooltip plus one shared line showing
+              only the FIRST unavailable entry, so a greyed-out option read as
+              broken rather than as not-applicable-to-this-answer. */}
           {formats.map((entry) => (
-            <button
-              className="focus-glass flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2 text-left text-[11px] glass-text-dark transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
-              disabled={!entry.available || busy !== null}
-              key={entry.format}
-              onClick={() => void save(entry.format)}
-              role="menuitem"
-              title={entry.reason}
-              type="button"
-            >
-              <span>{entry.label}</span>
-              {busy === entry.format ? <LoaderIcon className="h-3 w-3 animate-spin" /> : null}
-            </button>
+            <div key={entry.format}>
+              <button
+                className="focus-glass flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-2 text-left text-[11px] glass-text-dark transition-colors hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
+                disabled={!entry.available || busy !== null}
+                onClick={() => void save(entry.format)}
+                role="menuitem"
+                title={entry.reason}
+                type="button"
+              >
+                <span>{entry.label}</span>
+                {busy === entry.format ? <LoaderIcon className="h-3 w-3 animate-spin" /> : null}
+              </button>
+              {!entry.available && entry.reason ? (
+                <p className="px-2 pb-1 text-[9.5px] leading-snug glass-text-subtle">{entry.reason}</p>
+              ) : null}
+            </div>
           ))}
-          {formats.some((entry) => !entry.available) ? (
-            <p className="px-2 pt-1 pb-0.5 text-[9.5px] leading-snug glass-text-subtle">
-              {formats.find((entry) => !entry.available)?.reason}
-            </p>
-          ) : null}
           {error ? (
             <p className="px-2 pt-1 text-[9.5px] glass-text-dark" role="alert">
               {error}

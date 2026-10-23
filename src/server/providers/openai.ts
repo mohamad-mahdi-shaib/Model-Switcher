@@ -111,6 +111,35 @@ export function classifyOpenAi(status: number, body: OpenAiErrorBody | null): Cl
   return { code: "UPSTREAM", retryable: false };
 }
 
+/**
+ * Strips anything credential-shaped out of provider text before it is logged.
+ *
+ * Not theoretical: OpenAI's own 401 body reads "Incorrect API key provided:
+ * sk-...ABCD", echoing a prefix and suffix of the key that was sent. That is
+ * exactly the kind of fragment that must never reach a log file, so the
+ * sentence is kept and the key-shaped part is not.
+ */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(/sk-[A-Za-z0-9_-]{4,}/g, "sk-[redacted]")
+    .replace(/AIza[A-Za-z0-9_-]{4,}/g, "AIza[redacted]")
+    .replace(/vercel_blob_rw_[A-Za-z0-9_-]{4,}/g, "vercel_blob_rw_[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]{8,}/gi, "Bearer [redacted]");
+}
+
+/** The provider's own words, redacted, for server-side diagnostics only. */
+export function describeOpenAiError(status: number, body: OpenAiErrorBody | null): string {
+  const error = body?.error;
+  const parts = [
+    `HTTP ${status}`,
+    error?.type ? `type=${error.type}` : null,
+    error?.code ? `code=${error.code}` : null,
+    error?.param ? `param=${error.param}` : null,
+    error?.message ? `message=${error.message}` : null,
+  ].filter(Boolean);
+  return redactSecrets(parts.join(" "));
+}
+
 /** Transport faults carry no HTTP status; blaming the provider would be wrong. */
 function isNetworkError(error: unknown): boolean {
   const text = String((error as { message?: string })?.message ?? error).toLowerCase();
@@ -417,8 +446,12 @@ export const openaiProvider: ChatProvider = {
       throw new ProviderError(code, {
         info: code === "RATE_LIMIT" ? parseRetryAfter(response.headers) : undefined,
         retryable,
-        // `cause` stays server-side for logging; the route only ever forwards
-        // the code, never provider text.
+        // `status` and `detail` stay server-side for logging; the route only
+        // ever forwards the code, never provider text. Without them a 401
+        // and a 403 are the same line in the log, and they need different
+        // fixes -- a new key versus access to the configured model.
+        status: response.status,
+        detail: describeOpenAiError(response.status, body),
         cause: new Error(`openai ${response.status}`),
       });
     }
@@ -463,11 +496,15 @@ export const openaiProvider: ChatProvider = {
             // what arrived.
             const detail = (event.error ?? event.response) as OpenAiErrorBody["error"] &
               { code?: string; type?: string };
-            const { code, retryable } = classifyOpenAi(
-              500,
-              detail ? { error: detail } : null,
-            );
-            throw new ProviderError(code, { retryable });
+            const body = detail ? { error: detail } : null;
+            const { code, retryable } = classifyOpenAi(500, body);
+            // A mid-stream failure is the hardest kind to diagnose after the
+            // fact, so it carries the same detail as a pre-stream one.
+            throw new ProviderError(code, {
+              retryable,
+              status: 500,
+              detail: describeOpenAiError(500, body),
+            });
           }
         }
         // The SSE connection closed without ever emitting one of the

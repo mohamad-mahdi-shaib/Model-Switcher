@@ -7,7 +7,9 @@ import {
   flattenInline,
   generateFile,
   hasUnsupportedPdfText,
+  sanitiseForPdf,
   suggestFilename,
+  unsupportedPdfShare,
 } from "@/lib/file-generation";
 import { parseMarkdown } from "@/lib/markdown";
 
@@ -302,4 +304,117 @@ test("the markdown file is the answer's own source, byte for byte", async () => 
 test("an explicit filename overrides the suggestion", async () => {
   const file = await generateFile("markdown", ANSWER, { filename: "my-report" });
   assert.equal(file.filename, "my-report.md");
+});
+
+/* ------------------------- PDF availability: the reported regression ----- */
+
+/**
+ * The bug: Word, Excel and Markdown saved fine while PDF stayed permanently
+ * greyed out. The guard refused a PDF for ANY character outside Latin-1 plus
+ * general punctuation -- so one arrow, one tick, one emoji or one "™" in an
+ * otherwise plain English answer disabled the format entirely. Models emit
+ * those constantly.
+ */
+
+test("an ordinary English answer containing a symbol still offers a PDF", () => {
+  const answers = [
+    "# Report\n\nCost → savings this quarter.",
+    "# Report\n\n- Shipped ✓\n- Blocked ✗",
+    "# Report\n\nGreat results 🚀 this month.",
+    "# Report\n\nAcme™ saves ≈ 20% versus ≥ 2 rivals.",
+    "# Report\n\nBullets • and an ellipsis…",
+  ];
+  for (const answer of answers) {
+    const pdf = availableFormats(answer).find((f) => f.format === "pdf");
+    assert.equal(pdf?.available, true, `PDF should be offered for: ${JSON.stringify(answer)}`);
+  }
+});
+
+test("a genuinely unrenderable answer still refuses, with the reason", () => {
+  for (const answer of ["# مرحبا\n\nنص عربي كامل هنا", "# 日本語\n\nこれは日本語の文章です"]) {
+    const pdf = availableFormats(answer).find((f) => f.format === "pdf");
+    assert.equal(pdf?.available, false, answer);
+    assert.match(pdf?.reason ?? "", /use Word/);
+  }
+});
+
+test("the undrawable share is measured, not merely detected", () => {
+  assert.equal(unsupportedPdfShare("# Report\n\nPlain English."), 0);
+  // One emoji among many words is a small share...
+  assert.ok(unsupportedPdfShare("A fairly long English sentence 🚀 about work.") < 0.1);
+  // ...a whole Arabic paragraph is nearly all of it.
+  assert.ok(unsupportedPdfShare("نص عربي كامل هنا وهذا") > 0.8);
+});
+
+test("substitution keeps meaning that dropping would destroy", () => {
+  assert.equal(sanitiseForPdf("cost → savings"), "cost -> savings");
+  assert.equal(sanitiseForPdf("done ✓"), "done [x]");
+  assert.equal(sanitiseForPdf("about ≈ 20%"), "about ~ 20%");
+  assert.equal(sanitiseForPdf("at ≥ 5 and ≤ 9"), "at >= 5 and <= 9");
+  assert.equal(sanitiseForPdf("Acme™"), "Acme(TM)");
+});
+
+test("whitespace survives sanitisation -- otherwise every line would merge", () => {
+  assert.equal(sanitiseForPdf("a\nb\tc"), "a\nb\tc");
+});
+
+test("what cannot be drawn is dropped rather than mangled", () => {
+  // An emoji has no sensible ASCII equivalent, so it goes; the words stay.
+  assert.equal(sanitiseForPdf("great 🚀 news"), "great  news");
+});
+
+test("accented Latin text is untouched -- it was always renderable", () => {
+  assert.equal(sanitiseForPdf("café naïve £10 €20 –dash— “quote”"), "café naïve £10 €20 –dash— “quote”");
+  assert.equal(availableFormats("# Café\n\nnaïve résumé").find((f) => f.format === "pdf")?.available, true);
+});
+
+/* ----------------------------- the PDF is actually produced and readable -- */
+
+test("a symbol-laden answer produces a real PDF whose text reopens", async () => {
+  const answer =
+    "# Quarterly Review\n\nRevenue → up. Shipped ✓ on time. Growth ≈ 20% 🚀\n\n" +
+    "| Metric | Change |\n| --- | --- |\n| Revenue | ↑ 12% |\n";
+
+  const file = await generateFile("pdf", answer);
+  assert.deepEqual([...file.bytes.slice(0, 4)], [0x25, 0x50, 0x44, 0x46], "%PDF");
+  assert.ok(file.bytes.length > 1_000);
+
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(file.bytes));
+  const { text } = await extractText(pdf, { mergePages: true });
+
+  assert.match(text, /Quarterly Review/);
+  // The substitutions made it into the real text layer.
+  assert.match(text, /Revenue -> up/);
+  assert.match(text, /Shipped \[x\] on time/);
+  assert.match(text, /~ 20%/);
+  // And the table still rendered.
+  assert.match(text, /Metric/);
+});
+
+/* --------------------------------------- Code: disabled, with a reason --- */
+
+test("Code is offered when the answer HAS a code block, and names the extension", () => {
+  const withCode = availableFormats("# Script\n\n```python\nprint(1)\n```\n").find(
+    (f) => f.format === "code",
+  );
+  assert.equal(withCode?.available, true);
+  assert.equal(withCode?.label, "Code (.py)");
+});
+
+test("Code is disabled only when there is genuinely no code block, and says so", () => {
+  const withoutCode = availableFormats("# Report\n\nJust prose here.").find((f) => f.format === "code");
+  assert.equal(withoutCode?.available, false);
+  assert.match(withoutCode?.reason ?? "", /no code block/);
+});
+
+test("every unavailable format carries its OWN reason, so none is unexplained", () => {
+  // Prose only: no table, no code. Both must explain themselves.
+  const formats = availableFormats("# Report\n\nJust prose.");
+  for (const entry of formats) {
+    if (!entry.available) {
+      assert.ok(entry.reason, `${entry.format} is disabled with no reason given`);
+    }
+  }
+  assert.equal(formats.filter((f) => !f.available).length, 2, "xlsx and code");
 });

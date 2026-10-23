@@ -112,12 +112,28 @@ function isValidConversationId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 128 && /^[\w.:-]+$/.test(value);
 }
 
-/** Server-side diagnostics. Never logs credentials. */
+/**
+ * Server-side diagnostics. Never logs credentials, and never reaches the
+ * browser -- the client only ever receives the error CODE.
+ *
+ * It used to print `status: undefined, message: 'INVALID_KEY'`, which is the
+ * code repeated twice and nothing more: a rejected key and a key without
+ * access to the configured model logged identically, despite needing
+ * different fixes. Adapters now carry the upstream status and their own
+ * (redacted) explanation, and both are printed here.
+ */
 function logUpstream(where: string, error: unknown) {
-  const code = error instanceof ProviderError ? error.code : undefined;
-  const status = (error as { status?: number })?.status;
-  const message = (error as { message?: string })?.message ?? String(error);
-  console.error("[chat] upstream failure", { where, code, status, message });
+  const providerError = error instanceof ProviderError ? error : null;
+  const status = providerError?.status ?? (error as { status?: number })?.status;
+  const cause = (providerError?.cause as { message?: string } | undefined)?.message;
+  console.error("[chat] upstream failure", {
+    where,
+    code: providerError?.code,
+    status,
+    detail: providerError?.detail,
+    cause,
+    message: (error as { message?: string })?.message ?? String(error),
+  });
 }
 
 /**
