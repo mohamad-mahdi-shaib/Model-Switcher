@@ -55,9 +55,20 @@ const invoiceSchema = z.object({
 
 const contractSchema = z.object({
   title: z.string().nullable().describe("The agreement's title."),
+  /**
+   * Client and provider are named SEPARATELY as well as appearing in
+   * `parties`. A flat list says who is involved but not which side each one
+   * is on, and "who is the client?" is the question people actually ask of
+   * a contract.
+   */
+  client: z.string().nullable().describe("The party receiving the services (the client or customer)."),
+  provider: z.string().nullable().describe("The party supplying the services (the provider, vendor or contractor)."),
   parties: z.array(z.string()).describe("Every named party to the agreement."),
   effectiveDate: z.string().nullable().describe("When the agreement starts, ISO 8601 if determinable."),
+  endDate: z.string().nullable().describe("When the agreement ends, ISO 8601 if determinable."),
   termLength: z.string().nullable().describe('Duration as written, e.g. "12 months".'),
+  totalFee: z.number().nullable().describe("Total contract value as a plain number, without currency symbols or separators."),
+  currency: z.string().nullable().describe('ISO 4217 code for the fee, such as "USD", "GBP", "EUR".'),
   autoRenews: z.boolean().nullable().describe("Whether it renews automatically. null if the document does not say."),
   terminationNotice: z.string().nullable().describe('Notice required to terminate, e.g. "30 days".'),
   governingLaw: z.string().nullable().describe("The jurisdiction whose law governs."),
@@ -128,13 +139,18 @@ export const EXTRACTION_SCHEMAS: Record<ExtractionSchemaId, ExtractionSchema> = 
   contract: {
     id: "contract",
     label: "Contract",
-    description: "Parties, dates, term, termination and governing law.",
+    description: "Client, provider, dates, term, fee, termination and governing law.",
     schema: contractSchema,
     fields: [
       { key: "title", label: "Title", kind: "text" },
+      { key: "client", label: "Client", kind: "text" },
+      { key: "provider", label: "Provider", kind: "text" },
       { key: "parties", label: "Parties", kind: "list" },
-      { key: "effectiveDate", label: "Effective date", kind: "date" },
+      { key: "effectiveDate", label: "Start date", kind: "date" },
+      { key: "endDate", label: "End date", kind: "date" },
       { key: "termLength", label: "Term", kind: "text" },
+      { key: "totalFee", label: "Total fee", kind: "number" },
+      { key: "currency", label: "Currency", kind: "text" },
       { key: "autoRenews", label: "Auto-renews", kind: "boolean" },
       { key: "terminationNotice", label: "Termination notice", kind: "text" },
       { key: "governingLaw", label: "Governing law", kind: "text" },

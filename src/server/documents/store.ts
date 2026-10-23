@@ -95,6 +95,22 @@ function pathFor(id: string): string {
   return `${PREFIX}/${id}.json`;
 }
 
+/** Attempts for one read, including the first. Transport faults only. */
+const READ_MAX_ATTEMPTS = 3;
+const READ_BACKOFF_MS = [200, 500];
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Whether an error from `head` means "this blob does not exist" as opposed
+ * to "the request did not get through". Only the former is an answer.
+ */
+function isNotFound(error: unknown): boolean {
+  const name = (error as { name?: string })?.name ?? "";
+  const message = (error as { message?: string })?.message ?? "";
+  return /BlobNotFound/i.test(name) || /not found|404/i.test(message);
+}
+
 export class DocumentStorageError extends Error {
   constructor(message: string) {
     super(message);
@@ -150,24 +166,58 @@ export async function loadDocument(
   const token = process.env[TOKEN_ENV]?.trim();
   if (!token) return null;
 
-  let url: string;
-  try {
-    const meta = await head(pathFor(id), { token });
-    url = meta.url;
-  } catch {
-    return null;
+  /**
+   * A read is retried on a TRANSPORT failure, and only on that.
+   *
+   * The security property is unchanged and must stay unchanged: a document
+   * that does not exist and a document belonging to another conversation
+   * both return `null`, indistinguishably, so this cannot be used to probe
+   * which ids are real.
+   *
+   * What changed is that a dropped connection used to return `null` too --
+   * so a network blip between this app and blob storage was reported to the
+   * user as "No such document in this conversation". That was observed live:
+   * an upload succeeded, and extracting from it moments later answered 404.
+   * A blob that was found and then failed to transfer is neither missing nor
+   * forbidden, and saying so was simply wrong.
+   */
+  for (let attempt = 1; attempt <= READ_MAX_ATTEMPTS; attempt += 1) {
+    let url: string;
+    try {
+      const meta = await head(pathFor(id), { token });
+      url = meta.url;
+    } catch (error) {
+      // `head` throws BlobNotFoundError for a genuinely absent blob: that is
+      // an answer, not a fault, and must not be retried.
+      if (isNotFound(error)) return null;
+      if (attempt === READ_MAX_ATTEMPTS) return null;
+      await delay(READ_BACKOFF_MS[attempt - 1] ?? 400);
+      continue;
+    }
+
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      // A 404 here means the blob really is gone. Any other non-OK status is
+      // a server-side hiccup worth one more attempt.
+      if (response.status === 404) return null;
+      if (!response.ok) {
+        if (attempt === READ_MAX_ATTEMPTS) return null;
+        await delay(READ_BACKOFF_MS[attempt - 1] ?? 400);
+        continue;
+      }
+      const document = (await response.json()) as StoredDocument;
+      if (!document || typeof document !== "object" || !Array.isArray(document.chunks)) return null;
+      // The binding check. Unchanged, and still constant-time.
+      if (!sameString(document.conversationId ?? "", conversationId)) return null;
+      return document;
+    } catch {
+      // Transport fault mid-transfer.
+      if (attempt === READ_MAX_ATTEMPTS) return null;
+      await delay(READ_BACKOFF_MS[attempt - 1] ?? 400);
+    }
   }
 
-  try {
-    const response = await fetch(url, { cache: "no-store" });
-    if (!response.ok) return null;
-    const document = (await response.json()) as StoredDocument;
-    if (!document || typeof document !== "object" || !Array.isArray(document.chunks)) return null;
-    if (!sameString(document.conversationId ?? "", conversationId)) return null;
-    return document;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 /** Loads several documents, skipping any the caller may not read. */

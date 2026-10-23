@@ -40,14 +40,133 @@ const DEFAULT_MODEL = "gemini-3.6-flash";
  */
 const MAX_EXTRACTION_CHARS = 120_000;
 
+export type ExtractionErrorCode =
+  | "NOT_CONFIGURED"
+  | "EMPTY_DOCUMENT"
+  | "INVALID_OUTPUT"
+  /** The server's own credentials were refused. Never the caller's fault. */
+  | "AUTH"
+  /** Quota or rate limit. Waiting helps; retrying immediately does not. */
+  | "RATE_LIMITED"
+  /** The model rejected the request itself -- bad schema, unknown model. */
+  | "UNSUPPORTED"
+  /** Capacity. Transient by definition, and the one class worth retrying. */
+  | "BUSY"
+  /** Anything unclassified. */
+  | "UPSTREAM";
+
 export class ExtractionError extends Error {
-  code: "NOT_CONFIGURED" | "UPSTREAM" | "INVALID_OUTPUT" | "EMPTY_DOCUMENT";
-  constructor(code: ExtractionError["code"], message: string) {
+  code: ExtractionErrorCode;
+  constructor(code: ExtractionErrorCode, message: string) {
     super(message);
     this.name = "ExtractionError";
     this.code = code;
   }
 }
+
+/**
+ * Attempts allowed for ONE extraction, including the first.
+ *
+ * Mirrors the chat route's own `MAX_ATTEMPTS = 3`. The absence of this was
+ * the entire bug: `/api/chat` retried a 503 and recovered, extraction made a
+ * single attempt and surfaced "the model is busy" as though it were final.
+ * Measured against the live API while diagnosing: `gemini-3.6-flash` failed
+ * one attempt and succeeded on the next in 2.9 s.
+ */
+const MAX_ATTEMPTS = 3;
+
+/** Backoff before attempt 2 and attempt 3. Doubling, as the chat route does. */
+const RETRY_BACKOFF_MS = [900, 2_500];
+
+/**
+ * Two separate verdicts, because they are genuinely different questions.
+ *
+ * `retryable` — would calling THIS model again help? Only capacity and
+ * unclassified transport faults qualify.
+ *
+ * `tryFallback` — would calling a DIFFERENT model help? A broader set: a
+ * per-model quota is a separate bucket on another model, and a model that
+ * cannot do structured output has siblings that can. An auth failure is the
+ * one thing no other model fixes, since every model shares the one key.
+ */
+type FailureClass = {
+  code: ExtractionErrorCode;
+  detail: string;
+  retryable: boolean;
+  tryFallback: boolean;
+};
+
+/**
+ * Turns a provider error into a class, a user-facing sentence, and a verdict
+ * on whether trying again could possibly help.
+ *
+ * The ordering is deliberate: specific and PERMANENT classes are matched
+ * before the general transient one, so an auth failure whose body happens to
+ * contain the word "unavailable" is not mistaken for capacity and retried
+ * pointlessly. Previously every one of these collapsed into a single
+ * "the model is busy" sentence, which was actively misleading for the ones
+ * that waiting cannot fix.
+ */
+export function classifyProviderFailure(message: string): FailureClass {
+  if (/\b(401|403)\b|api[_ ]?key|permission[_ ]?denied|unauthenticated|unauthorized/i.test(message)) {
+    return {
+      code: "AUTH",
+      detail: "The extraction service rejected this server's credentials. The API key needs attention.",
+      retryable: false,
+      // Every model is reached with the same key, so no fallback can help.
+      tryFallback: false,
+    };
+  }
+  if (/\b429\b|quota|rate[_ ]?limit|resource[_ ]?exhausted/i.test(message)) {
+    return {
+      code: "RATE_LIMITED",
+      detail:
+        "The extraction service's quota or rate limit has been reached. Waiting will clear it; retrying immediately will not.",
+      // Hammering the same model is exactly what a rate limit is telling you
+      // not to do...
+      retryable: false,
+      // ...but Gemini quotas are PER MODEL, so the fallback has its own
+      // budget and is worth one try.
+      tryFallback: true,
+    };
+  }
+  if (/\b(400|404)\b|invalid[_ ]?argument|not found|unsupported|not supported/i.test(message)) {
+    return {
+      code: "UNSUPPORTED",
+      detail:
+        "The extraction request was rejected as invalid by the model — most likely the configured model cannot do structured output.",
+      retryable: false,
+      // Repeating it on the same model is pointless, but this is precisely
+      // the failure a different model fixes: if GEMINI_MODEL is pointed at
+      // something that cannot do constrained decoding, the fallback can.
+      tryFallback: true,
+    };
+  }
+  if (/\b(500|502|503|504)\b|unavailable|overload|high demand|internal error|try again/i.test(message)) {
+    return {
+      code: "BUSY",
+      detail: "The extraction model is overloaded.",
+      retryable: true,
+      tryFallback: true,
+    };
+  }
+  /**
+   * Unclassified is treated as RETRYABLE, on evidence rather than optimism:
+   * the transport between this app and Google drops connections (ECONNRESET
+   * mid-TLS was observed repeatedly while diagnosing), and such a failure
+   * carries no status code at all yet succeeds immediately on a second
+   * attempt. The retry is bounded at MAX_ATTEMPTS either way, so a genuinely
+   * permanent unknown costs two extra calls, not a loop.
+   */
+  return {
+    code: "UPSTREAM",
+    detail: "The extraction service could not complete the request.",
+    retryable: true,
+    tryFallback: true,
+  };
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function extractionConfigured(): boolean {
   return Boolean(process.env[KEY_ENV]?.trim());
@@ -55,6 +174,24 @@ export function extractionConfigured(): boolean {
 
 function extractionModel(): string {
   return process.env.GEMINI_EXTRACTION_MODEL?.trim() || process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
+}
+
+/**
+ * Model tried when the configured one has exhausted its retries on a
+ * capacity failure.
+ *
+ * One fallback, not a cascade: the point is to survive a burst of 503s on a
+ * single model, not to walk a catalogue. `GEMINI_EXTRACTION_FALLBACK_MODEL`
+ * overrides it, and setting that to the primary (or to an empty value)
+ * disables the fallback entirely.
+ */
+const DEFAULT_FALLBACK_MODEL = "gemini-3.5-flash-lite";
+
+export function fallbackModels(primary: string): string[] {
+  const configured = process.env.GEMINI_EXTRACTION_FALLBACK_MODEL;
+  const fallback = (configured ?? DEFAULT_FALLBACK_MODEL).trim();
+  if (!fallback || fallback === primary) return [];
+  return [fallback];
 }
 
 /* -------------------------------------------------------- schema shape --- */
@@ -164,40 +301,100 @@ export async function runExtraction(
   const model = extractionModel();
   const ai = new GoogleGenAI({ apiKey });
 
+  /**
+   * One extraction: the configured model, retried, then a fallback model if
+   * -- and only if -- the primary ran out of attempts on a CAPACITY failure.
+   *
+   * Measured against the live API while diagnosing this bug:
+   * `gemini-3.6-flash` is capacity-flappy, answering in ~3 s when healthy and
+   * returning 503 "experiencing high demand" in bursts; `gemini-3.5-flash-lite`
+   * answered the same structured request in ~1.3 s during one of those bursts.
+   * Retrying the primary handles a brief spike; the fallback handles a
+   * sustained one. The configured model stays the primary either way, and the
+   * model that actually answered is recorded on the result.
+   *
+   * A permanent failure (bad key, exhausted quota, rejected request) never
+   * reaches the fallback: repeating it on another model would spend more
+   * quota to reach the same answer.
+   */
+  const chain = [model, ...fallbackModels(model)];
   let raw: string | undefined;
-  try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: buildPrompt(schemaId, document.filename, text),
-      config: {
-        responseMimeType: "application/json",
-        responseJsonSchema: jsonSchema,
-        // Extraction is a reading task, not a writing one: the same document
-        // should give the same answer twice.
-        temperature: 0,
-        ...(signal ? { abortSignal: signal } : {}),
-      },
-    });
-    raw = response.text;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    // Logged before it is replaced by the user-facing sentence, for the same
-    // reason as in `embed.ts`: a live failure that tells the operator
-    // nothing cannot be diagnosed. Provider messages carry no credential.
-    console.error("[extract] provider call failed", { model, schema: schemaId, message });
-    if (/quota|rate|429/i.test(message)) {
-      throw new ExtractionError("UPSTREAM", "The extraction service is rate limited right now. Try again shortly.");
+  let usedModel = model;
+  let lastFailure: FailureClass | null = null;
+
+  outer: for (const [modelIndex, candidate] of chain.entries()) {
+    // Only the primary gets the full retry budget; a fallback is a single
+    // extra shot, so a bad spell cannot multiply into many calls.
+    const attempts = modelIndex === 0 ? MAX_ATTEMPTS : 1;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        const response = await ai.models.generateContent({
+          model: candidate,
+          contents: buildPrompt(schemaId, document.filename, text),
+          config: {
+            responseMimeType: "application/json",
+            responseJsonSchema: jsonSchema,
+            // Extraction is a reading task, not a writing one: the same
+            // document should give the same answer twice.
+            temperature: 0,
+            ...(signal ? { abortSignal: signal } : {}),
+          },
+        });
+        raw = response.text;
+        usedModel = candidate;
+        break outer;
+      } catch (error) {
+        // A caller who has gone away must not be retried on.
+        if (signal?.aborted) throw error;
+
+        const message = error instanceof Error ? error.message : String(error);
+        const failure = classifyProviderFailure(message);
+        lastFailure = failure;
+
+        // The provider's own words, server-side only, before they are
+        // replaced by the user-facing sentence. A live failure that tells the
+        // operator nothing cannot be diagnosed -- which is exactly how this
+        // bug stayed hidden. Provider messages carry no credential.
+        console.error("[extract] provider call failed", {
+          model: candidate,
+          primary: modelIndex === 0,
+          schema: schemaId,
+          attempt,
+          of: attempts,
+          code: failure.code,
+          retryable: failure.retryable,
+          message,
+        });
+
+        // Nothing anywhere can fix this one: stop immediately.
+        if (!failure.retryable && !failure.tryFallback) {
+          throw new ExtractionError(failure.code, failure.detail);
+        }
+
+        // Not worth repeating on THIS model: go straight to the next
+        // candidate rather than spending the rest of the attempt budget.
+        if (!failure.retryable) continue outer;
+
+        // Out of attempts here: fall through to the next candidate, if any.
+        if (attempt === attempts) continue outer;
+
+        await sleep(RETRY_BACKOFF_MS[attempt - 1] ?? 2_500);
+      }
     }
-    if (/api key|permission|401|403/i.test(message)) {
-      throw new ExtractionError("UPSTREAM", "The extraction service rejected this server's credentials.");
-    }
-    if (/overload|unavailable|503|high demand/i.test(message)) {
-      throw new ExtractionError(
-        "UPSTREAM",
-        "The extraction model is busy right now. This is temporary — try again in a moment.",
-      );
-    }
-    throw new ExtractionError("UPSTREAM", "The extraction service could not complete the request.");
+  }
+
+  if (raw === undefined) {
+    const failure = lastFailure ?? {
+      code: "UPSTREAM" as const,
+      detail: "The extraction service could not complete the request.",
+      retryable: true,
+      tryFallback: false,
+    };
+    throw new ExtractionError(
+      failure.code,
+      `${failure.detail} ${chain.length} model(s) were tried without success — this is usually temporary, so try again in a moment.`,
+    );
   }
 
   if (!raw || raw.trim().length === 0) {
@@ -239,7 +436,8 @@ export async function runExtraction(
       filename: document.filename,
       data,
       warnings,
-      model,
+      // The model that actually answered, which may be the fallback.
+      model: usedModel,
       extractedAt: Date.now(),
     },
     truncated,

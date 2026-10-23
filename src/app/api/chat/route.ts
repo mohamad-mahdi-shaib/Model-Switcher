@@ -7,6 +7,7 @@ import type {
 } from "@/lib/chat";
 import { MAX_CHARS, MAX_MESSAGES } from "@/lib/limits";
 import { hasPreferences, validatePreferences, type Preferences } from "@/lib/preferences";
+import { FILE_CAPABILITY_NOTE, wantsFile } from "@/server/preferences";
 import { getProvider, providerAvailability } from "@/server/providers/registry";
 import { ProviderError, type ProviderChunk } from "@/server/providers/types";
 import { validateWireAttachments } from "@/server/attachments";
@@ -277,6 +278,23 @@ export async function POST(request: Request) {
     }
   }
 
+  /**
+   * Project 4 fix: tell the model the app can save an answer as a real file.
+   *
+   * Reported behaviour was a flat refusal -- "I cannot directly create
+   * downloadable docs or PDF files" -- which is true of the MODEL and false
+   * of the app: `SaveAnswerMenu` turns any answer into a genuine .docx /
+   * .pdf / .xlsx. The model was simply never told, so it declined.
+   *
+   * Added only when this turn actually asks for a file, so a request that is
+   * not about files still sends no system instruction at all when there are
+   * no preferences and no documents -- the property the adapter tests pin.
+   */
+  const lastQuestion = validMessages.at(-1)?.content ?? "";
+  const capabilityNote = wantsFile(lastQuestion) ? FILE_CAPABILITY_NOTE : undefined;
+  const systemExtras =
+    [capabilityNote, documentContext].filter(Boolean).join("\n\n") || undefined;
+
   // Transient failures are common: capacity rejections and dropped transports.
   // Both are worth a couple of quick retries. Auth, quota and malformed-request
   // failures are never retried -- repeating them only burns quota and delays
@@ -286,7 +304,7 @@ export async function POST(request: Request) {
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
-      stream = await provider.stream(validMessages, request.signal, preferences, documentContext);
+      stream = await provider.stream(validMessages, request.signal, preferences, systemExtras);
       break;
     } catch (error) {
       if (request.signal.aborted) return new Response(null, { status: 499 });

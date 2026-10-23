@@ -634,3 +634,125 @@ test("documents: a conversation with no files sends no document fields and is un
     mock.restore();
   }
 });
+
+
+/** The system instruction as THIS adapter sends it: a leading developer message. */
+function systemInstructionOf(call: RequestInit): string | undefined {
+  const body = JSON.parse(String(call.body)) as { input?: { role: string; content: string }[] };
+  const first = body.input?.[0];
+  return first && first.role === "developer" ? first.content : undefined;
+}
+
+/* ------------------------- Project 4 fix: the file-capability note ------- */
+
+/**
+ * The reported bug: asked to "create a Word document", the app answered
+ * "I can't directly create downloadable docs or PDF files."
+ *
+ * That was true of the MODEL and false of the APP -- `SaveAnswerMenu` turns
+ * any answer into a real .docx/.pdf/.xlsx. Nothing ever told the model the
+ * capability existed, so it declined. These assert that it is now told, and
+ * equally important, that it is told ONLY when relevant: a request with no
+ * preferences, no documents and no file ask must still send no system
+ * instruction at all.
+ */
+
+test("a request for a Word document tells the model the app can produce one", async () => {
+  const mock = mockUpstream(() =>
+    sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
+  );
+  try {
+    await withKey(async () => {
+      const response = await POST(
+        postRequest({
+          provider: "gpt",
+          messages: [{ role: "user", content: "Create a Word document summarising remote work." }],
+        }),
+      );
+      assert.equal(response.status, 200);
+      const instruction = systemInstructionOf(mock.calls[0]);
+      assert.ok(instruction, "a file request must carry a system instruction");
+      assert.match(instruction, /Save as/);
+      assert.match(instruction, /\.docx/);
+      assert.match(instruction, /never say you cannot create files/i);
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("every file wording that was reported, and the obvious neighbours, are recognised", async () => {
+  const mock = mockUpstream(() =>
+    sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
+  );
+  try {
+    await withKey(async () => {
+      const asks = [
+        "Create a Word document summarising the benefits of remote work.",
+        "Can you make me a PDF of this?",
+        "Export this as an Excel spreadsheet",
+        "Give me a downloadable file",
+        "Write a report on Q3 performance",
+        "generate a csv of the results",
+        "draft a letter to the supplier",
+        "produce a docx version",
+      ];
+      for (const content of asks) {
+        mock.calls.length = 0;
+        const response = await POST(postRequest({ provider: "gpt", messages: [{ role: "user", content }] }));
+        assert.equal(response.status, 200, content);
+        const instruction = systemInstructionOf(mock.calls[0]);
+        assert.ok(instruction, `not recognised as a file request: ${content}`);
+        assert.match(instruction, /Save as/, content);
+      }
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("an ordinary question still sends NO system instruction at all", async () => {
+  const mock = mockUpstream(() =>
+    sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
+  );
+  try {
+    await withKey(async () => {
+      for (const content of ["hi", "what is the capital of France?", "explain recursion"]) {
+        mock.calls.length = 0;
+        const response = await POST(postRequest({ provider: "gpt", messages: [{ role: "user", content }] }));
+        assert.equal(response.status, 200, content);
+        assert.equal(
+          systemInstructionOf(mock.calls[0]),
+          undefined,
+          `a non-file question must stay byte-identical to before: ${content}`,
+        );
+      }
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("the capability note does not displace the user's own preferences", async () => {
+  const mock = mockUpstream(() =>
+    sse({ type: "response.output_text.delta", delta: "ok" }, { type: "response.completed" }),
+  );
+  try {
+    await withKey(async () => {
+      const response = await POST(
+        postRequest({
+          provider: "gpt",
+          messages: [{ role: "user", content: "Write me a report as a PDF." }],
+          preferences: { preferredName: "Sam", customInstructions: "Be concise." },
+        }),
+      );
+      assert.equal(response.status, 200);
+      const instruction = systemInstructionOf(mock.calls[0]) ?? "";
+      assert.match(instruction, /preferred name is "Sam"/);
+      assert.match(instruction, /Be concise\./);
+      assert.match(instruction, /Save as/);
+    });
+  } finally {
+    mock.restore();
+  }
+});

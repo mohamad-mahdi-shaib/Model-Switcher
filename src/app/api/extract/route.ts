@@ -1,6 +1,11 @@
 import { isExtractionSchemaId } from "@/lib/extraction";
 import { loadDocument, isValidDocumentId, documentStorageConfigured } from "@/server/documents/store";
-import { ExtractionError, extractionConfigured, runExtraction } from "@/server/extract/run";
+import {
+  ExtractionError,
+  extractionConfigured,
+  runExtraction,
+  type ExtractionErrorCode,
+} from "@/server/extract/run";
 import { checkRateLimit, rateLimitResponse } from "@/server/rate-limit";
 
 /**
@@ -27,6 +32,10 @@ type ErrorCode =
   | "NOT_FOUND"
   | "EMPTY_DOCUMENT"
   | "INVALID_OUTPUT"
+  | "AUTH"
+  | "RATE_LIMITED"
+  | "UNSUPPORTED"
+  | "BUSY"
   | "UPSTREAM";
 
 function errorResponse(code: ErrorCode, status: number, detail: string) {
@@ -93,9 +102,38 @@ export async function POST(request: Request) {
   } catch (error) {
     if (request.signal.aborted) return new Response(null, { status: 499 });
     if (error instanceof ExtractionError) {
-      const status =
-        error.code === "NOT_CONFIGURED" ? 503 : error.code === "EMPTY_DOCUMENT" ? 422 : 502;
-      return errorResponse(error.code, status, error.message);
+      /**
+       * Each failure class gets the status that actually describes it, so a
+       * caller (or a log, or a monitor) can tell "come back later" apart
+       * from "this will never work". Previously everything but two cases
+       * collapsed into 502 with one "the model is busy" sentence, which was
+       * wrong for every permanent failure.
+       */
+      const STATUS: Record<ExtractionErrorCode, number> = {
+        NOT_CONFIGURED: 503,
+        EMPTY_DOCUMENT: 422,
+        // Capacity: genuinely "try again", and the only one worth a
+        // Retry-After. 503 is the honest code for it.
+        BUSY: 503,
+        RATE_LIMITED: 429,
+        // The server's credentials or configuration are at fault, not the
+        // caller's request -- 502 keeps that an upstream problem.
+        AUTH: 502,
+        UNSUPPORTED: 502,
+        INVALID_OUTPUT: 502,
+        UPSTREAM: 502,
+      };
+      const status = STATUS[error.code] ?? 502;
+      return Response.json(
+        { code: error.code, detail: error.message },
+        {
+          status,
+          headers:
+            error.code === "BUSY" || error.code === "RATE_LIMITED"
+              ? { "Retry-After": "20", "Cache-Control": "no-store" }
+              : { "Cache-Control": "no-store" },
+        },
+      );
     }
     // Never echo a raw provider error: those can carry request metadata.
     console.error("[extract] failure", {

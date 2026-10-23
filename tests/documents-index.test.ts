@@ -117,7 +117,11 @@ test("document ids are NOT derived from a clock or a counter", () => {
   const first = newDocumentId();
   const second = newDocumentId();
   assert.notEqual(first.slice(0, 12), second.slice(0, 12), "a shared prefix would imply a clock");
-  assert.doesNotMatch(first, /^[a-z]+-/, "must not look like newId()'s prefixed format");
+  // Checked against newId()'s FULL shape (`prefix-<base36 clock>-<counter>`),
+  // not merely a leading "letters then hyphen": 256 bits of base64url can
+  // legitimately begin that way, and asserting on the prefix alone made this
+  // test fail roughly one run in a few hundred on a perfectly good id.
+  assert.doesNotMatch(first, /^[a-z]+-[a-z0-9]+-\d+$/, "must not look like newId()'s format");
 });
 
 test("path traversal and malformed ids are rejected before touching storage", () => {

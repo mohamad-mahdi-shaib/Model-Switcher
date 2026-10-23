@@ -148,6 +148,12 @@ export function chunkSections(sections: readonly DocumentSection[]): Chunk[] {
 /** Requests per batch. Keeps a single call well inside payload limits. */
 const BATCH_SIZE = 50;
 
+/** Attempts per batch, including the first. Matches the extraction path. */
+const EMBED_MAX_ATTEMPTS = 3;
+
+/** Backoff before attempt 2 and attempt 3. */
+const EMBED_BACKOFF_MS = [600, 1_500];
+
 function client(): GoogleGenAI {
   const apiKey = process.env[KEY_ENV]?.trim();
   if (!apiKey) {
@@ -192,34 +198,71 @@ export async function embedTexts(
 
   for (let start = 0; start < texts.length; start += BATCH_SIZE) {
     const batch = texts.slice(start, start + BATCH_SIZE);
+
+    /**
+     * Each batch gets up to EMBED_MAX_ATTEMPTS tries.
+     *
+     * An upload that dies on one network blip is an upload the user simply
+     * cannot make, and a document that will not index cannot be questioned
+     * or extracted from -- so the whole feature inherits the flakiness of a
+     * single HTTP call. Observed live: `fetch failed` (a dropped TLS
+     * connection, no status code) killing an otherwise healthy upload.
+     *
+     * Only transient classes go round again. A rejected key or an exhausted
+     * quota is raised immediately, because repeating it cannot help.
+     */
     let response;
-    try {
-      response = await ai.models.embedContent({
-        model,
-        contents: batch as string[],
-        config: { taskType, outputDimensionality: OUTPUT_DIMENSIONS },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      /**
-       * Log the real cause server-side before it is replaced by the
-       * user-facing sentence.
-       *
-       * Found the hard way: the first live upload failed with "the embedding
-       * service failed" and the server logged nothing at all, so there was
-       * no way to tell a bad model id from a quota problem from a malformed
-       * request without adding this. The message is the provider's own and
-       * carries no credential -- the key is never part of an error body.
-       */
-      console.error("[embed] provider call failed", { model, batch: batch.length, message });
-      if (/quota|rate|429/i.test(message)) {
-        throw new EmbeddingError(
-          "The embedding service is rate limited right now. Wait a moment and try the upload again.",
-        );
+    for (let attempt = 1; attempt <= EMBED_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        response = await ai.models.embedContent({
+          model,
+          contents: batch as string[],
+          config: { taskType, outputDimensionality: OUTPUT_DIMENSIONS },
+        });
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const permanent =
+          /(401|403)|api[_ ]?key|permission[_ ]?denied|unauthenticated/i.test(message) ||
+          /429|quota|rate[_ ]?limit|resource[_ ]?exhausted/i.test(message) ||
+          /(400|404)|invalid[_ ]?argument|not found|unsupported/i.test(message);
+
+        // The provider's own words, server-side only. No credential appears
+        // in a provider error body.
+        console.error("[embed] provider call failed", {
+          model,
+          batch: batch.length,
+          attempt,
+          of: EMBED_MAX_ATTEMPTS,
+          permanent,
+          message,
+        });
+
+        if (permanent || attempt === EMBED_MAX_ATTEMPTS) {
+          if (/quota|rate|429|resource[_ ]?exhausted/i.test(message)) {
+            throw new EmbeddingError(
+              "The embedding service is rate limited right now. Wait a moment and try the upload again.",
+            );
+          }
+          if (/api[_ ]?key|permission|401|403|unauthenticated/i.test(message)) {
+            throw new EmbeddingError("The embedding service rejected this server's credentials.");
+          }
+          if (/(400|404)|invalid[_ ]?argument|not found|unsupported/i.test(message)) {
+            throw new EmbeddingError(
+              "The embedding service rejected the request — the configured embedding model may not be available.",
+            );
+          }
+          throw new EmbeddingError(
+            `The document could not be indexed: the embedding service failed ${EMBED_MAX_ATTEMPTS} times. This is usually temporary — try the upload again.`,
+          );
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, EMBED_BACKOFF_MS[attempt - 1] ?? 1_500));
       }
-      if (/api key|permission|401|403/i.test(message)) {
-        throw new EmbeddingError("The embedding service rejected this server's credentials.");
-      }
+    }
+
+    if (!response) {
+      // Unreachable: the loop above either assigns or throws.
       throw new EmbeddingError("The document could not be indexed because the embedding service failed.");
     }
 

@@ -11,7 +11,12 @@ import {
   type ExtractionResult,
 } from "@/lib/extraction";
 import { buildExtractionJson, buildExtractionSheets } from "@/lib/extraction-download";
-import { buildDocumentText, toGeminiJsonSchema } from "@/server/extract/run";
+import {
+  buildDocumentText,
+  classifyProviderFailure,
+  fallbackModels,
+  toGeminiJsonSchema,
+} from "@/server/extract/run";
 import type { StoredDocument } from "@/server/documents/store";
 import { z } from "zod";
 
@@ -518,4 +523,195 @@ test("a missing value leaves a genuinely empty cell in the reopened file", async
   const rows = XLSX.utils.sheet_to_json(reopened.Sheets["Extraction"], { header: 1 }) as unknown[][];
   const notesRow = rows.find((row) => row[0] === "Notes");
   assert.equal(notesRow?.[1] ?? "", "", 'an unfound value must not reach the sheet as "null"');
+});
+
+/* ------------------------------- provider failure classification (the fix) */
+
+/**
+ * The bug these guard against, exactly as reported: every provider failure
+ * collapsed into one sentence, "The extraction model is busy right now", and
+ * extraction made a single attempt with no retry. Chat recovered from the
+ * same 503 because `/api/chat` retries; extraction did not, so the feature
+ * looked permanently broken while chat read the same file fine.
+ */
+
+test("the REAL 503 that broke extraction is classified as retryable capacity", () => {
+  // Captured verbatim from the live failure during diagnosis.
+  const real =
+    '{"error":{"code":503,"message":"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.","status":"UNAVAILABLE"}}';
+  const failure = classifyProviderFailure(real);
+  assert.equal(failure.code, "BUSY");
+  assert.equal(failure.retryable, true, "a capacity failure must be retried, which is what was missing");
+  assert.equal(failure.tryFallback, true);
+});
+
+test("an auth failure is never retried and never falls back", () => {
+  for (const message of [
+    '{"error":{"code":403,"message":"Permission denied","status":"PERMISSION_DENIED"}}',
+    "API key not valid. Please pass a valid API key.",
+    '{"error":{"code":401,"message":"Unauthenticated"}}',
+  ]) {
+    const failure = classifyProviderFailure(message);
+    assert.equal(failure.code, "AUTH", message);
+    assert.equal(failure.retryable, false, "retrying a rejected key only wastes calls");
+    assert.equal(failure.tryFallback, false, "every model shares the one key");
+  }
+});
+
+test("a quota failure is not retried on the same model, but may try the fallback", () => {
+  for (const message of [
+    '{"error":{"code":429,"message":"Resource has been exhausted","status":"RESOURCE_EXHAUSTED"}}',
+    "You exceeded your current quota.",
+  ]) {
+    const failure = classifyProviderFailure(message);
+    assert.equal(failure.code, "RATE_LIMITED", message);
+    assert.equal(failure.retryable, false, "a rate limit is telling you to stop, not to repeat");
+    assert.equal(failure.tryFallback, true, "Gemini quotas are per model, so another model has its own");
+  }
+});
+
+test("a rejected request is classified as unsupported, not as capacity", () => {
+  for (const message of [
+    '{"error":{"code":400,"message":"Invalid JSON payload","status":"INVALID_ARGUMENT"}}',
+    '{"error":{"code":404,"message":"models/does-not-exist is not found for API version v1beta"}}',
+    "responseJsonSchema is not supported for this model",
+  ]) {
+    const failure = classifyProviderFailure(message);
+    assert.equal(failure.code, "UNSUPPORTED", message);
+    assert.equal(failure.retryable, false);
+    // A model that cannot do structured output has siblings that can.
+    assert.equal(failure.tryFallback, true);
+  }
+});
+
+test("an unclassified transport fault is retryable", () => {
+  // Observed live: a dropped TLS connection carries no status code at all,
+  // and the very next attempt succeeds.
+  const failure = classifyProviderFailure("fetch failed");
+  assert.equal(failure.code, "UPSTREAM");
+  assert.equal(failure.retryable, true);
+});
+
+test("a permanent failure is matched even when its body mentions unavailability", () => {
+  // Ordering matters: "unavailable" appears in plenty of permanent errors,
+  // and treating one as capacity would retry something that cannot recover.
+  const failure = classifyProviderFailure(
+    '{"error":{"code":403,"message":"Permission denied: the model is unavailable to this project"}}',
+  );
+  assert.equal(failure.code, "AUTH");
+  assert.equal(failure.retryable, false);
+});
+
+test("no permanent failure is reported with the old catch-all busy sentence", () => {
+  for (const message of [
+    '{"error":{"code":403,"message":"Permission denied"}}',
+    '{"error":{"code":429,"message":"Quota exceeded"}}',
+    '{"error":{"code":400,"message":"Invalid argument"}}',
+  ]) {
+    const failure = classifyProviderFailure(message);
+    assert.doesNotMatch(
+      failure.detail,
+      /busy right now/i,
+      "a permanent failure must not be reported as a temporary one",
+    );
+  }
+});
+
+/* ------------------------------------------------- the fallback policy --- */
+
+test("a fallback model is offered by default, and is not the primary", () => {
+  const models = fallbackModels("gemini-3.6-flash");
+  assert.equal(models.length, 1);
+  assert.notEqual(models[0], "gemini-3.6-flash");
+});
+
+test("the fallback is configurable, and can be disabled", () => {
+  const previous = process.env.GEMINI_EXTRACTION_FALLBACK_MODEL;
+  try {
+    process.env.GEMINI_EXTRACTION_FALLBACK_MODEL = "gemini-3.1-flash-lite";
+    assert.deepEqual(fallbackModels("gemini-3.6-flash"), ["gemini-3.1-flash-lite"]);
+
+    // Empty disables it entirely.
+    process.env.GEMINI_EXTRACTION_FALLBACK_MODEL = "";
+    assert.deepEqual(fallbackModels("gemini-3.6-flash"), []);
+
+    // Naming the primary disables it too, rather than calling it twice.
+    process.env.GEMINI_EXTRACTION_FALLBACK_MODEL = "gemini-3.6-flash";
+    assert.deepEqual(fallbackModels("gemini-3.6-flash"), []);
+  } finally {
+    if (previous === undefined) delete process.env.GEMINI_EXTRACTION_FALLBACK_MODEL;
+    else process.env.GEMINI_EXTRACTION_FALLBACK_MODEL = previous;
+  }
+});
+
+/* --------------------------------- the contract schema's required fields -- */
+
+test("the contract schema carries every field the brief asks to extract", () => {
+  const properties = Object.keys(
+    (z.toJSONSchema(EXTRACTION_SCHEMAS.contract.schema) as { properties: Record<string, unknown> })
+      .properties,
+  );
+  for (const key of [
+    "client",
+    "provider",
+    "effectiveDate",
+    "endDate",
+    "termLength",
+    "totalFee",
+    "currency",
+    "paymentTerms",
+    "terminationNotice",
+    "governingLaw",
+  ]) {
+    assert.ok(properties.includes(key), `contract schema is missing ${key}`);
+  }
+});
+
+test("a fully populated contract validates, and a sparse one does too", () => {
+  const full = {
+    title: "Services Agreement",
+    client: "Cedar Bridge Solutions Ltd.",
+    provider: "Northstar Digital Works LLC",
+    parties: ["Cedar Bridge Solutions Ltd.", "Northstar Digital Works LLC"],
+    effectiveDate: "2026-11-01",
+    endDate: "2027-10-31",
+    termLength: "12 months",
+    totalFee: 4800,
+    currency: "USD",
+    autoRenews: null,
+    terminationNotice: "60 days",
+    governingLaw: "Example State",
+    paymentTerms: "Net 45",
+    keyObligations: [],
+    sourceRefs: ["Term"],
+  };
+  assert.equal(EXTRACTION_SCHEMAS.contract.schema.safeParse(full).success, true);
+
+  // Nullable throughout: a document stating none of it still validates.
+  const sparse: Record<string, unknown> = { ...full };
+  for (const key of ["client", "provider", "endDate", "totalFee", "currency", "governingLaw"]) {
+    sparse[key] = null;
+  }
+  assert.equal(EXTRACTION_SCHEMAS.contract.schema.safeParse(sparse).success, true);
+});
+
+test("a contract fee arriving as a STRING is rejected, like any other number", () => {
+  const result = EXTRACTION_SCHEMAS.contract.schema.safeParse({
+    title: null,
+    client: null,
+    provider: null,
+    parties: [],
+    effectiveDate: null,
+    endDate: null,
+    termLength: null,
+    totalFee: "4,800",
+    currency: null,
+    autoRenews: null,
+    terminationNotice: null,
+    governingLaw: null,
+    paymentTerms: null,
+    keyObligations: [],
+    sourceRefs: [],
+  });
+  assert.equal(result.success, false);
 });
