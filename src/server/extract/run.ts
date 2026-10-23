@@ -8,6 +8,7 @@ import {
   type ExtractionSchemaId,
 } from "@/lib/extraction";
 import type { StoredDocument } from "@/server/documents/store";
+import { withRetry } from "@/server/retry";
 
 /**
  * Project 4, Milestone 4: running a structured extraction against a document.
@@ -75,8 +76,11 @@ export class ExtractionError extends Error {
  */
 const MAX_ATTEMPTS = 3;
 
-/** Backoff before attempt 2 and attempt 3. Doubling, as the chat route does. */
-const RETRY_BACKOFF_MS = [900, 2_500];
+/**
+ * Delay before the first retry; each later wait doubles it (900 ms, then
+ * 1,800 ms). Capacity recovers on a seconds scale, not a sub-second one.
+ */
+const RETRY_BASE_DELAY_MS = 900;
 
 /**
  * Two separate verdicts, because they are genuinely different questions.
@@ -166,7 +170,10 @@ export function classifyProviderFailure(message: string): FailureClass {
   };
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Classifies whatever the SDK threw, without caring about its shape. */
+function classify(error: unknown): FailureClass {
+  return classifyProviderFailure(error instanceof Error ? error.message : String(error));
+}
 
 export function extractionConfigured(): boolean {
   return Boolean(process.env[KEY_ENV]?.trim());
@@ -282,6 +289,12 @@ export async function runExtraction(
   document: StoredDocument,
   schemaId: ExtractionSchemaId,
   signal?: AbortSignal,
+  /**
+   * Seams for tests only, both optional and both inert in production:
+   * `client` lets a test point the real SDK at a local stand-in server, and
+   * `sleep` lets it exercise the backoff without spending real seconds.
+   */
+  options: { client?: GoogleGenAI; sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<{ result: ExtractionResult; truncated: boolean }> {
   const apiKey = process.env[KEY_ENV]?.trim();
   if (!apiKey) {
@@ -299,7 +312,7 @@ export async function runExtraction(
   const spec = EXTRACTION_SCHEMAS[schemaId];
   const jsonSchema = toGeminiJsonSchema(z.toJSONSchema(spec.schema));
   const model = extractionModel();
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = options.client ?? new GoogleGenAI({ apiKey });
 
   /**
    * One extraction: the configured model, retried, then a fallback model if
@@ -322,65 +335,67 @@ export async function runExtraction(
   let usedModel = model;
   let lastFailure: FailureClass | null = null;
 
-  outer: for (const [modelIndex, candidate] of chain.entries()) {
+  for (const [modelIndex, candidate] of chain.entries()) {
+    const isPrimary = modelIndex === 0;
     // Only the primary gets the full retry budget; a fallback is a single
     // extra shot, so a bad spell cannot multiply into many calls.
-    const attempts = modelIndex === 0 ? MAX_ATTEMPTS : 1;
+    const attempts = isPrimary ? MAX_ATTEMPTS : 1;
 
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      try {
-        const response = await ai.models.generateContent({
-          model: candidate,
-          contents: buildPrompt(schemaId, document.filename, text),
-          config: {
-            responseMimeType: "application/json",
-            responseJsonSchema: jsonSchema,
-            // Extraction is a reading task, not a writing one: the same
-            // document should give the same answer twice.
-            temperature: 0,
-            ...(signal ? { abortSignal: signal } : {}),
+    try {
+      raw = await withRetry(
+        async () => {
+          const response = await ai.models.generateContent({
+            model: candidate,
+            contents: buildPrompt(schemaId, document.filename, text),
+            config: {
+              responseMimeType: "application/json",
+              responseJsonSchema: jsonSchema,
+              // Extraction is a reading task, not a writing one: the same
+              // document should give the same answer twice.
+              temperature: 0,
+              ...(signal ? { abortSignal: signal } : {}),
+            },
+          });
+          return response.text;
+        },
+        {
+          attempts,
+          baseDelayMs: RETRY_BASE_DELAY_MS,
+          signal,
+          sleep: options.sleep,
+          shouldRetry: (error) => classify(error).retryable,
+          onFailure: (error, attempt) => {
+            const failure = classify(error);
+            lastFailure = failure;
+            // The provider's own words, server-side only, before they are
+            // replaced by the user-facing sentence. A live failure that
+            // tells the operator nothing cannot be diagnosed -- which is
+            // exactly how this bug stayed hidden. Provider messages carry
+            // no credential.
+            console.error("[extract] provider call failed", {
+              model: candidate,
+              primary: isPrimary,
+              schema: schemaId,
+              attempt,
+              of: attempts,
+              code: failure.code,
+              retryable: failure.retryable,
+              message: error instanceof Error ? error.message : String(error),
+            });
           },
-        });
-        raw = response.text;
-        usedModel = candidate;
-        break outer;
-      } catch (error) {
-        // A caller who has gone away must not be retried on.
-        if (signal?.aborted) throw error;
-
-        const message = error instanceof Error ? error.message : String(error);
-        const failure = classifyProviderFailure(message);
-        lastFailure = failure;
-
-        // The provider's own words, server-side only, before they are
-        // replaced by the user-facing sentence. A live failure that tells the
-        // operator nothing cannot be diagnosed -- which is exactly how this
-        // bug stayed hidden. Provider messages carry no credential.
-        console.error("[extract] provider call failed", {
-          model: candidate,
-          primary: modelIndex === 0,
-          schema: schemaId,
-          attempt,
-          of: attempts,
-          code: failure.code,
-          retryable: failure.retryable,
-          message,
-        });
-
-        // Nothing anywhere can fix this one: stop immediately.
-        if (!failure.retryable && !failure.tryFallback) {
-          throw new ExtractionError(failure.code, failure.detail);
-        }
-
-        // Not worth repeating on THIS model: go straight to the next
-        // candidate rather than spending the rest of the attempt budget.
-        if (!failure.retryable) continue outer;
-
-        // Out of attempts here: fall through to the next candidate, if any.
-        if (attempt === attempts) continue outer;
-
-        await sleep(RETRY_BACKOFF_MS[attempt - 1] ?? 2_500);
+        },
+      );
+      usedModel = candidate;
+      break;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const failure = classify(error);
+      lastFailure = failure;
+      // Nothing anywhere can fix this one: stop before the fallback.
+      if (!failure.retryable && !failure.tryFallback) {
+        throw new ExtractionError(failure.code, failure.detail);
       }
+      // Otherwise fall through to the next candidate, if there is one.
     }
   }
 

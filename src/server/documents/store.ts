@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { del, head, put } from "@vercel/blob";
 import type { DocumentKind, DocumentMeta } from "@/lib/documents";
+import { withRetry } from "@/server/retry";
 
 /**
  * Project 4: persistent storage for parsed documents and their embeddings.
@@ -97,9 +98,15 @@ function pathFor(id: string): string {
 
 /** Attempts for one read, including the first. Transport faults only. */
 const READ_MAX_ATTEMPTS = 3;
-const READ_BACKOFF_MS = [200, 500];
+/** Delay before the first retry; each later wait doubles it. */
+const READ_BASE_DELAY_MS = 200;
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * A definitive "there is nothing here for you" -- missing, malformed, or
+ * belonging to another conversation. Carries no detail, because the caller
+ * must not be able to tell those three apart.
+ */
+class DefinitiveNull extends Error {}
 
 /**
  * Whether an error from `head` means "this blob does not exist" as opposed
@@ -180,47 +187,50 @@ export async function loadDocument(
    * an upload succeeded, and extracting from it moments later answered 404.
    * A blob that was found and then failed to transfer is neither missing nor
    * forbidden, and saying so was simply wrong.
+   *
+   * `DefinitiveNull` is how a real "no" stops the retry loop: it is an
+   * answer, not a fault, and repeating it would waste calls to reach the
+   * same conclusion.
    */
-  for (let attempt = 1; attempt <= READ_MAX_ATTEMPTS; attempt += 1) {
-    let url: string;
-    try {
-      const meta = await head(pathFor(id), { token });
-      url = meta.url;
-    } catch (error) {
-      // `head` throws BlobNotFoundError for a genuinely absent blob: that is
-      // an answer, not a fault, and must not be retried.
-      if (isNotFound(error)) return null;
-      if (attempt === READ_MAX_ATTEMPTS) return null;
-      await delay(READ_BACKOFF_MS[attempt - 1] ?? 400);
-      continue;
-    }
+  try {
+    return await withRetry(
+      async () => {
+        let url: string;
+        try {
+          url = (await head(pathFor(id), { token })).url;
+        } catch (error) {
+          // `head` throws for a genuinely absent blob -- an answer.
+          if (isNotFound(error)) throw new DefinitiveNull();
+          throw error;
+        }
 
-    try {
-      const response = await fetch(url, { cache: "no-store" });
-      // A 404 here means the blob really is gone. Any other non-OK status is
-      // a server-side hiccup worth one more attempt.
-      if (response.status === 404) return null;
-      if (!response.ok) {
-        if (attempt === READ_MAX_ATTEMPTS) return null;
-        await delay(READ_BACKOFF_MS[attempt - 1] ?? 400);
-        continue;
-      }
-      const document = (await response.json()) as StoredDocument;
-      if (!document || typeof document !== "object" || !Array.isArray(document.chunks)) return null;
-      // The binding check. Unchanged, and still constant-time.
-      if (!sameString(document.conversationId ?? "", conversationId)) return null;
-      return document;
-    } catch {
-      // Transport fault mid-transfer.
-      if (attempt === READ_MAX_ATTEMPTS) return null;
-      await delay(READ_BACKOFF_MS[attempt - 1] ?? 400);
-    }
+        const response = await fetch(url, { cache: "no-store" });
+        // A 404 here means the blob really is gone. Any other non-OK status
+        // is a server-side hiccup worth another attempt.
+        if (response.status === 404) throw new DefinitiveNull();
+        if (!response.ok) throw new Error(`blob read failed with ${response.status}`);
+
+        const document = (await response.json()) as StoredDocument;
+        if (!document || typeof document !== "object" || !Array.isArray(document.chunks)) {
+          throw new DefinitiveNull();
+        }
+        // The binding check. Unchanged, and still constant-time.
+        if (!sameString(document.conversationId ?? "", conversationId)) throw new DefinitiveNull();
+        return document;
+      },
+      {
+        attempts: READ_MAX_ATTEMPTS,
+        baseDelayMs: READ_BASE_DELAY_MS,
+        shouldRetry: (error) => !(error instanceof DefinitiveNull),
+      },
+    );
+  } catch {
+    // Every ending -- a definitive no, or transport that never recovered --
+    // is the same `null` to the caller.
+    return null;
   }
-
-  return null;
 }
 
-/** Loads several documents, skipping any the caller may not read. */
 export async function loadDocuments(
   ids: readonly string[],
   conversationId: string,
