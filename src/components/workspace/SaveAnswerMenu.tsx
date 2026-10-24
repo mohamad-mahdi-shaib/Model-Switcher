@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DownloadIcon, LoaderIcon } from "@/components/icons";
-import { availableFormats, generateFile, type FileFormat } from "@/lib/file-generation";
+import {
+  availableFormats,
+  extractDocumentContent,
+  generateFile,
+  type FileFormat,
+} from "@/lib/file-generation";
 
 /**
  * Project 4, Milestone 5: saving an answer as a real file.
@@ -32,7 +37,18 @@ export function SaveAnswerMenu({ text }: { text: string }) {
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const formats = useMemo(() => availableFormats(text), [text]);
+  /**
+   * Save As exports THIS MESSAGE, and keeps doing so.
+   *
+   * Only the document fence is honoured here -- markers are an instruction to
+   * this app and should never land in a saved file -- and nothing else is
+   * removed. Conversational trimming belongs to the generate-a-document path
+   * (`GeneratedFileCard`), not to exporting a chat message, or a reply that
+   * happens to open with "Here's how that works" would quietly lose its
+   * first line.
+   */
+  const content = useMemo(() => extractDocumentContent(text).content, [text]);
+  const formats = useMemo(() => availableFormats(content), [content]);
 
   // Close on an outside click or Escape, like every other transient menu here.
   useEffect(() => {
@@ -58,7 +74,7 @@ export function SaveAnswerMenu({ text }: { text: string }) {
     setBusy(format);
     setError(null);
     try {
-      const file = await generateFile(format, text);
+      const file = await generateFile(format, content);
       const blob = new Blob([file.bytes as unknown as BlobPart], { type: file.mimeType });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -73,7 +89,11 @@ export function SaveAnswerMenu({ text }: { text: string }) {
       // Surfaced rather than swallowed: a silent no-op on a Save button is
       // indistinguishable from a broken download.
       console.error("[save-answer] generation failed", caught);
-      setError("That file could not be generated.");
+      setError(
+        caught instanceof Error && caught.message
+          ? caught.message
+          : "That file could not be generated.",
+      );
     } finally {
       setBusy(null);
     }

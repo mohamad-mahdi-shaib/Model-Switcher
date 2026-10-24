@@ -20,7 +20,7 @@ import { parseMarkdown, type BlockNode, type InlineNode } from "@/lib/markdown";
  * file.
  */
 
-export type FileFormat = "docx" | "pdf" | "xlsx" | "markdown" | "code";
+export type FileFormat = "docx" | "pdf" | "xlsx" | "json" | "markdown" | "code";
 
 export type GeneratedFile = {
   filename: string;
@@ -247,6 +247,19 @@ export type FormatAvailability = {
   reason?: string;
 };
 
+/** Whether an answer contains something that would parse as JSON. */
+function hasJson(blocks: readonly BlockNode[], text: string): boolean {
+  const fenced = findCodeBlocks(blocks).find((block) => (block.lang ?? "").toLowerCase() === "json");
+  const candidate = (fenced?.value ?? text).trim();
+  if (!candidate.startsWith("{") && !candidate.startsWith("[")) return false;
+  try {
+    JSON.parse(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function availableFormats(text: string): FormatAvailability[] {
   const blocks = parseMarkdown(text);
   const tables = findTables(blocks);
@@ -272,6 +285,12 @@ export function availableFormats(text: string): FormatAvailability[] {
       label: code.length > 0 ? `Code (.${codeExtension(code[0].lang)})` : "Code",
       available: code.length > 0,
       reason: code.length === 0 ? "This answer has no code block." : undefined,
+    },
+    {
+      format: "json",
+      label: "JSON (.json)",
+      available: hasJson(blocks, text),
+      reason: hasJson(blocks, text) ? undefined : "This answer has no JSON to save.",
     },
     { format: "markdown", label: "Markdown (.md)", available: true },
   ];
@@ -640,6 +659,27 @@ export async function generateFile(
       return generatePdf(blocks, name);
     case "xlsx":
       return generateXlsx(blocks, name);
+    case "json": {
+      /**
+       * A JSON file must contain JSON, not an answer that mentions JSON.
+       * The content comes from a fenced json block when there is one (which
+       * is how a model presents structured data), otherwise from the whole
+       * answer, and it is PARSED before being written -- a file that does
+       * not parse is not a JSON file, and saying so beats handing over
+       * something that fails on open.
+       */
+      const fenced = findCodeBlocks(blocks).find(
+        (block) => (block.lang ?? "").toLowerCase() === "json",
+      );
+      const candidate = (fenced?.value ?? text).trim();
+      try {
+        const parsed: unknown = JSON.parse(candidate);
+        const pretty = `${JSON.stringify(parsed, null, 2)}\n`;
+        return textFile(pretty, `${name}.json`, "application/json");
+      } catch {
+        throw new Error("This answer does not contain valid JSON to save.");
+      }
+    }
     case "markdown":
       return textFile(text, `${name}.md`, "text/markdown");
     case "code": {
@@ -656,4 +696,224 @@ export async function generateFile(
       return textFile(content, `${name}.${codeExtension(code[0].lang)}`, "text/plain");
     }
   }
+}
+
+/* ------------------------------------------- what the user actually asked */
+
+/**
+ * The file format a question is asking for, if it is asking for one.
+ *
+ * Separate from `wantsFile` (server-side, decides whether the model needs to
+ * be told it CAN make files). This one decides what the transcript should
+ * offer: when someone asks for "a PDF", the answer is rendered as a file card
+ * with a download button rather than as a wall of text they have to scroll
+ * past and then find a menu for.
+ *
+ * Checked most-specific first, because "export the report as a PDF" mentions
+ * both a document and a PDF, and the PDF is the part that was asked for.
+ */
+const FORMAT_PATTERNS: ReadonlyArray<readonly [RegExp, FileFormat]> = [
+  [/\bpdfs?\b/i, "pdf"],
+  [/\b(xlsx?|excel|spreadsheet|workbook)\b/i, "xlsx"],
+  [/\b(docx?|word document|word file|word doc)\b/i, "docx"],
+  [/\bjson\b/i, "json"],
+  [/\bmarkdown\b|\.md\b/i, "markdown"],
+  [/\b(code file|source file|script file)\b/i, "code"],
+  // Generic document words come last: they only mean "docx" once nothing
+  // more specific has matched.
+  [/\b(document|report|memo|letter|proposal)\b/i, "docx"],
+];
+
+/** The filename stem an answer would be saved under, without parsing twice. */
+export function filenameStemFor(text: string): string {
+  return suggestFilename(parseMarkdown(text));
+}
+
+export function detectRequestedFormat(question: string): FileFormat | null {
+  for (const [pattern, format] of FORMAT_PATTERNS) {
+    if (pattern.test(question)) return format;
+  }
+  return null;
+}
+
+/** Human label for a format, for the file card. */
+export const FORMAT_LABELS: Record<FileFormat, string> = {
+  docx: "Word document",
+  pdf: "PDF",
+  xlsx: "Excel spreadsheet",
+  json: "JSON file",
+  markdown: "Markdown",
+  code: "Code file",
+};
+
+/**
+ * The extension a format will produce, so the card can show the real
+ * filename before anything is generated.
+ */
+export function extensionFor(format: FileFormat, text: string): string {
+  if (format === "code") {
+    const code = findCodeBlocks(parseMarkdown(text));
+    return code.length > 0 ? codeExtension(code[0].lang) : "txt";
+  }
+  return format === "markdown" ? "md" : format;
+}
+
+/**
+ * Whether an answer is substantial enough to be worth collapsing into a card.
+ *
+ * A one-line reply ("Sure -- what should it cover?") is not a document, and
+ * hiding it behind a download button would be absurd.
+ *
+ * Length alone is a poor test, though: a tight one-page report with a
+ * heading and a table can sit under any threshold worth setting, and a
+ * rambling conversational answer can sail over it. So STRUCTURE counts
+ * first -- a heading, a table or a list is what a document looks like --
+ * and length is only the fallback for prose that has none of them.
+ */
+export function looksLikeDocument(text: string): boolean {
+  const trimmed = text.trim();
+  // Below this nothing is a document, however it is shaped: a two-item list
+  // saying "Sure / What topic?" is a question, not a report.
+  if (trimmed.length < 60) return false;
+
+  const blocks = parseMarkdown(trimmed);
+  const structured = blocks.some(
+    (block) => block.type === "heading" || block.type === "table" || block.type === "list",
+  );
+  // Structure is the signal; plain prose has to be long enough to be one.
+  return structured || trimmed.length >= 200;
+}
+
+/* ------------------------------- the document inside a conversational reply */
+
+/**
+ * The fence a model is asked to put around document content.
+ *
+ * Why a fence at all: the file and the chat reply were the same string, so
+ * "Sure, here is your PDF:" ended up INSIDE the PDF. Asking the model nicely
+ * not to editorialise is a mitigation, not a boundary -- models add a line of
+ * preamble constantly, and the user discovers it only after opening the file.
+ *
+ * A marker is something the generator can act on rather than hope for.
+ */
+export const DOCUMENT_OPEN = "<<<FILE>>>";
+export const DOCUMENT_CLOSE = "<<<END FILE>>>";
+
+const FENCE_PATTERN = /<<<FILE>>>\s*([\s\S]*?)\s*(?:<<<END FILE>>>|$)/;
+
+/**
+ * Conversational openers. Matched only against a SHORT leading paragraph that
+ * is plain prose -- never a heading, table, list or code block, which are
+ * document content by definition.
+ */
+const PREAMBLE_PATTERNS: readonly RegExp[] = [
+  /^(sure|certainly|of course|absolutely|no problem|got it)\b/i,
+  /^here('s| is| are)\b/i,
+  /^below is\b/i,
+  /^i('ve| have)\s+(created|prepared|generated|written|put together|drafted)\b/i,
+  /^(this|the following) is (the|a|your)\b/i,
+  /^you can (find|download)\b/i,
+];
+
+/** Conversational closers, matched against a short trailing paragraph. */
+const CLOSER_PATTERNS: readonly RegExp[] = [
+  /^let me know\b/i,
+  /^feel free\b/i,
+  /^(i )?hope (this|that|it)\b/i,
+  /^would you like\b/i,
+  /^(if you|should you) (need|want|would)\b/i,
+  /^(you can|just) (download|click|use)\b/i,
+];
+
+/** Longer than this, a paragraph is content even if it opens politely. */
+const CHATTER_MAX_CHARS = 240;
+
+/** A block that is structurally document content, whatever it says. */
+function isStructural(block: string): boolean {
+  return /^\s*(#{1,6}\s|\||[-*+]\s|\d+[.)]\s|>|```)/.test(block);
+}
+
+function isChatter(block: string, patterns: readonly RegExp[]): boolean {
+  const trimmed = block.trim();
+  if (!trimmed || trimmed.length > CHATTER_MAX_CHARS) return false;
+  if (isStructural(trimmed)) return false;
+  return patterns.some((pattern) => pattern.test(trimmed));
+}
+
+export type DocumentExtraction = {
+  /** The content that should become the file. */
+  content: string;
+  /** True when the model used the fence, so the boundary was explicit. */
+  fenced: boolean;
+  /** True when conversational text was removed. */
+  trimmed: boolean;
+};
+
+/**
+ * Separates the DOCUMENT from the conversation around it.
+ *
+ * Two mechanisms, in order of trustworthiness:
+ *
+ * 1. The fence. When the model marks the document explicitly, everything
+ *    outside it is conversation and is dropped. Exact, and the preferred
+ *    path -- `FILE_CAPABILITY_NOTE` asks for it on every file request.
+ *
+ * 2. Preamble trimming, for when the model ignores the fence. Only a SHORT,
+ *    plain-prose opening or closing paragraph matching a known conversational
+ *    shape is removed; a heading, table, list or code block is never touched,
+ *    and neither is a long paragraph, because those are the document.
+ *
+ * `stripChatter` is off by default so the function is a no-op on an ordinary
+ * answer: Save As on a normal chat message must keep exporting that message
+ * verbatim, and a reply that happens to open with "Here's how recursion
+ * works" must not be silently docked its first line.
+ */
+export function extractDocumentContent(
+  answer: string,
+  options: { stripChatter?: boolean } = {},
+): DocumentExtraction {
+  const fenced = FENCE_PATTERN.exec(answer);
+  if (fenced && fenced[1].trim()) {
+    return { content: fenced[1].trim(), fenced: true, trimmed: true };
+  }
+
+  if (!options.stripChatter) {
+    return { content: answer.trim(), fenced: false, trimmed: false };
+  }
+
+  const blocks = answer.trim().split(/\n{2,}/);
+  let start = 0;
+  let end = blocks.length;
+  while (start < end && isChatter(blocks[start], PREAMBLE_PATTERNS)) start += 1;
+  while (end > start && isChatter(blocks[end - 1], CLOSER_PATTERNS)) end -= 1;
+
+  // Never strip everything: if the whole reply reads as chatter, it IS the
+  // reply, and an empty document helps nobody.
+  if (start >= end) return { content: answer.trim(), fenced: false, trimmed: false };
+
+  const content = blocks.slice(start, end).join("\n\n").trim();
+  return { content, fenced: false, trimmed: content !== answer.trim() };
+}
+
+/**
+ * The reply with the fence markers removed, for display.
+ *
+ * The markers are an instruction to this app, not something a reader should
+ * ever see in the transcript.
+ */
+/**
+ * Whether the model fenced a document in this answer.
+ *
+ * Used as a second signal for showing the file card: the fence IS the
+ * model saying "this is a document". Without this, an answer that fenced a
+ * document after a request whose format could not be guessed would render
+ * the raw markers into the transcript, which is the one place they must
+ * never appear.
+ */
+export function hasDocumentFence(answer: string): boolean {
+  return answer.includes(DOCUMENT_OPEN);
+}
+
+export function stripDocumentMarkers(answer: string): string {
+  return answer.split(DOCUMENT_OPEN).join("").split(DOCUMENT_CLOSE).join("").trim();
 }

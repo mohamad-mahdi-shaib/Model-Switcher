@@ -24,6 +24,9 @@ import {
   SAVE_AS,
   TABLE_STATE,
   CLOSE_MENUS,
+  FILE_CARD_STATE,
+  CLICK_FILE_DOWNLOAD,
+  TOGGLE_FILE_TEXT,
   assertMocked,
 } from "./mock.mjs";
 
@@ -159,10 +162,17 @@ try {
     "all five formats are listed",
     JSON.stringify(labels),
   );
+  // Every format the answer can actually support is enabled. JSON is the
+  // exception by design: this answer has a table and code but no JSON, and
+  // offering a JSON download would produce a file that does not parse.
   log(
-    (menu.entries || []).every((e) => !e.disabled),
-    "an answer with a table AND code enables every format",
-    JSON.stringify((menu.entries || []).filter((e) => e.disabled)),
+    (menu.entries || []).filter((e) => e.disabled).every((e) => /JSON/.test(e.label)),
+    "an answer with a table AND code enables every format it can support",
+    JSON.stringify((menu.entries || []).filter((e) => e.disabled).map((e) => e.label)),
+  );
+  log(
+    (menu.entries || []).some((e) => /JSON/.test(e.label) && e.disabled && /no JSON/.test(e.title)),
+    "and JSON is withheld, with the reason, when the answer has none",
   );
   log(
     labels.some((l) => l.includes("Code (.py)")),
@@ -279,6 +289,149 @@ try {
     arabicDocx && arabicDocx.size > 5_000,
     "and it really generates, carrying the Arabic text into a Word file",
     JSON.stringify(arabicDocx),
+  );
+
+  /* ------------------------------- the generated-file card (ChatGPT-like) -- */
+
+  /**
+   * When the QUESTION asks for a file, the answer should not arrive as a wall
+   * of text with a menu to hunt for: it should be a compact card naming the
+   * file, with a download button on it.
+   */
+  await run(page, CLOSE_MENUS);
+  await answerWith(
+    page,
+    [
+      "# Remote Work Report\n\n",
+      "A short report for the leadership team covering cost, retention and focus across two quarters.\n\n",
+      "| Benefit | Effect |\n| --- | ---: |\n| Lower cost | 1,250.50 |\n| Retention | 18 |\n",
+    ],
+    "Create a Word document summarising the benefits of remote work",
+  );
+
+  const card = await run(page, FILE_CARD_STATE);
+  log(card.present === true, "a file request renders a download card, not a wall of text");
+  log(
+    /\.docx$/.test(card.filename || ""),
+    "the card names the file in the format that was ASKED for",
+    JSON.stringify(card.filename),
+  );
+  log(
+    /remote-work-report/.test(card.filename || ""),
+    "named from the document's own heading",
+    JSON.stringify(card.filename),
+  );
+  log(
+    /Word document/.test(card.cardText || ""),
+    "and says what kind of file it is",
+    JSON.stringify((card.cardText || "").slice(0, 60)),
+  );
+
+  // Collapsed by default: the body text is behind the toggle.
+  log(card.expanded === false, "the answer text is collapsed by default", `expanded=${card.expanded}`);
+  log(card.toggleLabel === "Show text", "with a way to read it", JSON.stringify(card.toggleLabel));
+
+  await run(page, TOGGLE_FILE_TEXT);
+  await sleep(200);
+  const expanded = await run(page, FILE_CARD_STATE);
+  log(expanded.expanded === true, "the full answer can be revealed");
+  log(
+    /Lower cost/.test(expanded.cardText || ""),
+    "and the revealed text is the real answer",
+  );
+
+  // The download button produces a genuine .docx.
+  await run(page, TOGGLE_FILE_TEXT);
+  await run(page, CLICK_FILE_DOWNLOAD);
+  await sleep(2500);
+  downloads = await evaluate(page, () => window.__downloads);
+  const fromCard = downloads[downloads.length - 1];
+  log(
+    fromCard &&
+      fromCard.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "the card's download button produces a real Word file",
+    JSON.stringify(fromCard),
+  );
+  log(fromCard && fromCard.size > 5_000, "with a real document's bytes", `size=${fromCard && fromCard.size}`);
+
+  // An ordinary question must NOT be collapsed into a card.
+  await answerWith(page, ["Paris is the capital of France."], "what is the capital of France?");
+  const noCard = await evaluate(
+    page,
+    () => document.querySelectorAll('[aria-label^="Download "]').length,
+  );
+  log(noCard === 1, "an ordinary answer is left alone, not turned into a file", `cards=${noCard}`);
+
+  /* ----------------- a fenced document: generation, not message export ---- */
+
+  /**
+   * The reported bug: "Create a PDF containing my name and skills" produced
+   * a conversational reply, and exporting it saved "Sure, here is your PDF:"
+   * along with everything else. The model now fences the document, and the
+   * card generates from the fenced content only.
+   */
+  await run(page, CLOSE_MENUS);
+  await answerWith(
+    page,
+    [
+      "Sure! Here is the CV you asked for.\n\n",
+      "<<<FILE>>>\n# Jordan Avery\n\n## Education\n- BSc Computer Science, Example University, 2024\n\n## Skills\n- TypeScript\n- Technical writing\n<<<END FILE>>>\n\n",
+      "Let me know if you would like a different layout.",
+    ],
+    "Create a PDF containing my name, education and skills",
+  );
+
+  const docCard = await run(page, FILE_CARD_STATE);
+  log(docCard.present === true, "a document request renders a file card");
+  log(
+    /\.pdf$/.test(docCard.filename || ""),
+    "in the format that was requested",
+    JSON.stringify(docCard.filename),
+  );
+  log(
+    /jordan-avery/.test(docCard.filename || ""),
+    "named from the DOCUMENT, not from the conversational opener",
+    JSON.stringify(docCard.filename),
+  );
+
+  const transcript = await evaluate(page, () => document.body.innerText);
+  log(
+    !/<<<FILE>>>|<<<END FILE>>>/.test(transcript),
+    "the control markers never render into the transcript",
+  );
+
+  await run(page, CLICK_FILE_DOWNLOAD);
+  await sleep(2500);
+  downloads = await evaluate(page, () => window.__downloads);
+  const generatedPdf = downloads[downloads.length - 1];
+  log(
+    generatedPdf && generatedPdf.type === "application/pdf",
+    "the card downloads a real PDF",
+    JSON.stringify(generatedPdf),
+  );
+  log(
+    generatedPdf && /jordan-avery\.pdf$/.test(generatedPdf.filename || ""),
+    "under the document's own name",
+    JSON.stringify(generatedPdf && generatedPdf.filename),
+  );
+
+  await run(page, TOGGLE_FILE_TEXT);
+  await sleep(300);
+  const revealed = await run(page, FILE_CARD_STATE);
+  // Show text deliberately reveals the WHOLE reply, because a remark the
+  // model made outside the fence ("I left out X, you did not give it to me")
+  // must stay readable. The card says what the FILE contains.
+  log(/Jordan Avery/.test(revealed.cardText || ""), "Show text reveals the document");
+  log(
+    /conversational text around it is left out/.test(revealed.cardText || ""),
+    "and the card states that the file excludes the conversation",
+  );
+  // Checked AFTER expanding, because that is where the raw markers showed up
+  // -- the earlier check ran while the card was still collapsed and missed it.
+  log(
+    !/<<<FILE>>>|<<<END FILE>>>/.test(revealed.cardText || ""),
+    "the markers are not readable in the expanded text either",
+    JSON.stringify((revealed.cardText || "").slice(0, 80)),
   );
 
   const escaped = page.getApiChatInterceptCount();

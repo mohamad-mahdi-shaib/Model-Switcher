@@ -33,12 +33,27 @@ import type { Preferences } from "@/lib/preferences";
  * not otherwise instruct the model how to answer.
  */
 export const FILE_CAPABILITY_NOTE =
-  "This app can turn any answer you write into a real downloadable file: every answer has a " +
-  '"Save as" control offering Word (.docx), PDF, Excel (.xlsx), Markdown and code files, generated ' +
-  "from your reply. So when the user asks for a document, report, spreadsheet or code file, never say " +
-  "you cannot create files - write the full content as your answer, formatted with Markdown headings, " +
-  "lists and tables (a Markdown table becomes a real table in Word and real cells in Excel), then tell " +
-  'them to use "Save as" beneath your reply and pick the format they want.';
+  "This app turns your answer into a real downloadable file automatically: when the user asks for a " +
+  "document, report, spreadsheet, data file or code file, your reply is rendered as a file card with " +
+  "a download button, in the format they asked for (Word, PDF, Excel, JSON, Markdown or code). So " +
+  "never say you cannot create files, and do not explain how to save or export it - the download " +
+  "button is already there.\n\n" +
+  // The fence is the whole fix for "Sure, here is your PDF" ending up INSIDE
+  // the PDF. It gives the app an exact boundary instead of a hope.
+  "Put the document between the markers <<<FILE>>> and <<<END FILE>>>, on their own lines, with " +
+  "NOTHING else inside them. Everything outside the markers is conversation and is left out of the " +
+  "file, so put any remark there rather than in the document. The document itself must contain no " +
+  "preamble, no explanation of what you did, and no sign-off - only the content that belongs in the " +
+  "finished file.\n\n" +
+  "Format the document with Markdown headings, lists and tables: a Markdown table becomes a real " +
+  "table in Word and real cells in Excel. For a spreadsheet give the data AS a Markdown table; for " +
+  "JSON give a single fenced json block containing valid JSON; for code give one fenced code block " +
+  "with the right language.\n\n" +
+  // Requirement: never fabricate the user's own details.
+  "Never invent personal information. If the user asks for a document about themselves - a CV, a " +
+  "letter, a profile - and has not given you the details, do not make any up and do not use " +
+  "placeholders as though they were real: ask them for exactly what is missing instead, outside the " +
+  "markers, and write no file that turn.";
 
 /**
  * Whether this turn is asking for a file, and so needs the note above.

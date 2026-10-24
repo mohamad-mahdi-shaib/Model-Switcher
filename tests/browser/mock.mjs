@@ -578,3 +578,46 @@ export const TABLE_STATE = `
   };
 })()
 `;
+
+/** Reads the generated-file card rendered in the last assistant answer. */
+export const FILE_CARD_STATE = `
+(() => {
+  const buttons = Array.from(document.querySelectorAll('[aria-label^="Download "]'));
+  const button = buttons[buttons.length - 1];
+  if (!button) return { present: false };
+  const card = button.closest("div").parentElement;
+  const toggle = Array.from(card.querySelectorAll("button")).find((b) =>
+    /Show text|Hide text/.test(b.textContent || ""),
+  );
+  return {
+    present: true,
+    filename: (button.getAttribute("aria-label") || "").replace("Download ", ""),
+    cardText: (card.textContent || "").trim(),
+    toggleLabel: toggle ? (toggle.textContent || "").trim() : null,
+    expanded: toggle ? toggle.getAttribute("aria-expanded") === "true" : null,
+  };
+})()
+`;
+
+/** Clicks the last answer's download button. */
+export const CLICK_FILE_DOWNLOAD = `
+(() => {
+  const buttons = Array.from(document.querySelectorAll('[aria-label^="Download "]'));
+  const button = buttons[buttons.length - 1];
+  if (!button) return false;
+  button.click();
+  return true;
+})()
+`;
+
+/** Toggles the card's "Show text" / "Hide text". */
+export const TOGGLE_FILE_TEXT = `
+(() => {
+  const toggle = Array.from(document.querySelectorAll("button")).reverse().find((b) =>
+    /Show text|Hide text/.test(b.textContent || ""),
+  );
+  if (!toggle) return false;
+  toggle.click();
+  return true;
+})()
+`;

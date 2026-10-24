@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import {
   availableFormats,
   codeExtension,
+  DOCUMENT_CLOSE,
+  DOCUMENT_OPEN,
+  extractDocumentContent,
+  hasDocumentFence,
+  stripDocumentMarkers,
   coerceCell,
   flattenInline,
   generateFile,
@@ -416,5 +421,275 @@ test("every unavailable format carries its OWN reason, so none is unexplained", 
       assert.ok(entry.reason, `${entry.format} is disabled with no reason given`);
     }
   }
-  assert.equal(formats.filter((f) => !f.available).length, 2, "xlsx and code");
+  assert.deepEqual(
+    formats.filter((f) => !f.available).map((f) => f.format).sort(),
+    ["code", "json", "xlsx"],
+    "prose has no table, no code and no JSON",
+  );
+});
+
+/* ===================== document generation vs message export ============= */
+
+/**
+ * The reported bug: asking for "a PDF containing my name and skills" produced
+ * a conversational reply, and exporting it saved the whole chat message --
+ * "Sure, here is your PDF:" and all -- instead of a clean document.
+ *
+ * Root cause: the file and the reply were the same string. These tests pin
+ * the two operations apart.
+ *
+ * All MOCKED in the sense that no model is called: the assistant text is
+ * supplied directly. The FILES, however, are real -- written by the real
+ * generators and reopened with mammoth / SheetJS / unpdf.
+ */
+
+/** What a model actually returns when it fences the document properly. */
+const FENCED_REPLY = `Sure! Here is the CV you asked for.
+
+${DOCUMENT_OPEN}
+# Jordan Avery
+
+## Education
+- BSc Computer Science, Example University, 2024
+
+## Skills
+- TypeScript
+- Technical writing
+${DOCUMENT_CLOSE}
+
+Let me know if you would like a different layout.`;
+
+/** The same, from a model that ignored the fence. */
+const UNFENCED_REPLY = `Sure! Here is the CV you asked for.
+
+# Jordan Avery
+
+## Education
+- BSc Computer Science, Example University, 2024
+
+## Skills
+- TypeScript
+- Technical writing
+
+Let me know if you would like a different layout.`;
+
+/** An ordinary answer that merely begins politely. Not a document request. */
+const NORMAL_REPLY = `Here's how recursion works: a function calls itself until it reaches a base case. The base case is what stops it from recursing forever and overflowing the stack, so every recursive function needs one.`;
+
+/* --- A. exporting a normal message keeps exporting that message ---------- */
+
+test("A: Save As on a normal message exports the message verbatim", async () => {
+  // No fence, and chatter trimming is NOT applied on this path.
+  const extracted = extractDocumentContent(NORMAL_REPLY);
+  assert.equal(extracted.content, NORMAL_REPLY.trim());
+  assert.equal(extracted.trimmed, false);
+
+  const file = await generateFile("markdown", extracted.content);
+  const written = new TextDecoder().decode(file.bytes);
+  assert.match(written, /^Here's how recursion works/, "the opening line must survive");
+  assert.match(written, /overflowing the stack/);
+});
+
+test("A: a polite opener in a NORMAL answer is never trimmed away", () => {
+  // The danger of preamble trimming: "Here's how..." is content, not chatter.
+  // Save As does not trim at all, and even the document path keeps this,
+  // because the paragraph is long and the reply has no other content.
+  assert.equal(extractDocumentContent(NORMAL_REPLY).content, NORMAL_REPLY.trim());
+  assert.equal(
+    extractDocumentContent(NORMAL_REPLY, { stripChatter: true }).content,
+    NORMAL_REPLY.trim(),
+  );
+});
+
+/* --- F. conversational text is excluded from a generated document -------- */
+
+test("F: the fenced document excludes the preamble and the sign-off", () => {
+  const extracted = extractDocumentContent(FENCED_REPLY, { stripChatter: true });
+  assert.equal(extracted.fenced, true);
+  assert.match(extracted.content, /^# Jordan Avery/);
+  assert.doesNotMatch(extracted.content, /Sure!/);
+  assert.doesNotMatch(extracted.content, /Let me know/);
+  assert.doesNotMatch(extracted.content, /<<<FILE>>>|<<<END FILE>>>/);
+});
+
+test("F: an unfenced reply still loses its conversational wrapper", () => {
+  const extracted = extractDocumentContent(UNFENCED_REPLY, { stripChatter: true });
+  assert.equal(extracted.fenced, false);
+  assert.equal(extracted.trimmed, true);
+  assert.match(extracted.content, /^# Jordan Avery/);
+  assert.doesNotMatch(extracted.content, /Sure!/);
+  assert.doesNotMatch(extracted.content, /Let me know/);
+});
+
+test("F: markers never survive into a saved file, even via Save As", () => {
+  // Save As does not trim chatter, but it must still never write the
+  // app's own control markers into a document.
+  const extracted = extractDocumentContent(FENCED_REPLY);
+  assert.doesNotMatch(extracted.content, /<<<FILE>>>|<<<END FILE>>>/);
+});
+
+test("F: unrelated chat history is not in the document -- only this answer is", () => {
+  // Extraction is per-message by construction: it is given one answer and
+  // cannot reach the rest of the conversation.
+  const extracted = extractDocumentContent(FENCED_REPLY, { stripChatter: true });
+  assert.doesNotMatch(extracted.content, /recursion/);
+});
+
+/* --- B/C/D/E. real files, from the extracted document -------------------- */
+
+test("B: a requested PDF contains the document and NOT the preamble", async () => {
+  const content = extractDocumentContent(FENCED_REPLY, { stripChatter: true }).content;
+  const file = await generateFile("pdf", content);
+
+  assert.deepEqual([...file.bytes.slice(0, 4)], [0x25, 0x50, 0x44, 0x46], "%PDF");
+  assert.ok(file.bytes.length > 1_000);
+
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(file.bytes));
+  const { text } = await extractText(pdf, { mergePages: true });
+
+  assert.match(text, /Jordan Avery/);
+  assert.match(text, /BSc Computer Science/);
+  assert.doesNotMatch(text, /Sure!/, "the conversational opener must not be in the PDF");
+  assert.doesNotMatch(text, /Let me know/, "nor the sign-off");
+});
+
+test("C: a requested Word document is valid and reopens with its structure", async () => {
+  const content = extractDocumentContent(FENCED_REPLY, { stripChatter: true }).content;
+  const file = await generateFile("docx", content);
+  assert.equal(file.bytes[0], 0x50);
+  assert.equal(file.bytes[1], 0x4b);
+
+  const mammoth = await import("mammoth");
+  const { value: html } = await mammoth.convertToHtml({ buffer: Buffer.from(file.bytes) });
+  assert.match(html, /<h1>Jordan Avery<\/h1>/);
+  assert.match(html, /<h2>Education<\/h2>/);
+  assert.match(html, /<ul>[\s\S]*TypeScript[\s\S]*<\/ul>/);
+  assert.doesNotMatch(html, /Sure!/);
+  assert.doesNotMatch(html, /Let me know/);
+});
+
+test("D: a requested spreadsheet keeps the DATA structure, not the prose", async () => {
+  const reply = `Of course, here is the breakdown.
+
+${DOCUMENT_OPEN}
+| Region | Revenue | Growth |
+| --- | ---: | ---: |
+| North | 1,250.50 | 12 |
+| South | 980 | -3 |
+${DOCUMENT_CLOSE}
+
+Tell me if you want more regions.`;
+
+  const content = extractDocumentContent(reply, { stripChatter: true }).content;
+  const file = await generateFile("xlsx", content);
+
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.read(Buffer.from(file.bytes), { type: "buffer" });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
+
+  assert.equal(rows.length, 2, "two data rows, no prose rows");
+  assert.equal(rows[0]["Region"], "North");
+  // Still numeric, so the column can be summed.
+  assert.equal(rows[0]["Revenue"], 1250.5);
+  assert.equal(typeof rows[0]["Revenue"], "number");
+  assert.doesNotMatch(JSON.stringify(rows), /Of course|Tell me/);
+});
+
+test("E: a requested code file carries the code and the right extension", async () => {
+  const reply = `Here you go.
+
+${DOCUMENT_OPEN}
+\`\`\`python
+def greet(name):
+    return f"Hello {name}"
+\`\`\`
+${DOCUMENT_CLOSE}
+
+Hope that helps.`;
+
+  const content = extractDocumentContent(reply, { stripChatter: true }).content;
+  const file = await generateFile("code", content);
+
+  assert.match(file.filename, /\.py$/);
+  const written = new TextDecoder().decode(file.bytes);
+  assert.match(written, /^def greet\(name\):/);
+  assert.doesNotMatch(written, /Here you go|Hope that helps/, "prose must not reach a source file");
+  assert.doesNotMatch(written, /```/, "nor the fence itself");
+});
+
+test("E: a requested Markdown file is the document, not the whole reply", async () => {
+  const content = extractDocumentContent(FENCED_REPLY, { stripChatter: true }).content;
+  const file = await generateFile("markdown", content);
+  const written = new TextDecoder().decode(file.bytes);
+  assert.match(written, /^# Jordan Avery/);
+  assert.doesNotMatch(written, /Sure!/);
+  assert.match(file.filename, /\.md$/);
+});
+
+test("D: a requested JSON file contains parseable JSON, not prose", async () => {
+  const reply = `Sure.
+
+${DOCUMENT_OPEN}
+\`\`\`json
+{ "name": "Jordan Avery", "skills": ["TypeScript", "Technical writing"] }
+\`\`\`
+${DOCUMENT_CLOSE}`;
+
+  const content = extractDocumentContent(reply, { stripChatter: true }).content;
+  const file = await generateFile("json", content);
+
+  assert.match(file.filename, /\.json$/);
+  const written = new TextDecoder().decode(file.bytes);
+  const parsed = JSON.parse(written) as { name: string; skills: string[] };
+  assert.equal(parsed.name, "Jordan Avery");
+  assert.equal(parsed.skills.length, 2);
+  assert.doesNotMatch(written, /Sure/);
+});
+
+/* --- G. failures are honest, never a fake download ----------------------- */
+
+test("G: asking for JSON when the answer has none fails loudly", async () => {
+  await assert.rejects(
+    () => generateFile("json", "# Report\n\nThere is no JSON here at all."),
+    /does not contain valid JSON/i,
+    "better an actionable error than a file that will not open",
+  );
+});
+
+test("G: JSON is not offered when the answer has none, and says why", () => {
+  const entry = availableFormats("# Report\n\nJust prose.").find((f) => f.format === "json");
+  assert.equal(entry?.available, false);
+  assert.match(entry?.reason ?? "", /no JSON/i);
+});
+
+test("G: malformed JSON is refused rather than written out broken", async () => {
+  const broken = "```json\n{ \"name\": \"Jordan\", }\n```";
+  await assert.rejects(() => generateFile("json", broken), /valid JSON/i);
+  assert.equal(availableFormats(broken).find((f) => f.format === "json")?.available, false);
+});
+
+test("G: an empty document never silently becomes an empty file", () => {
+  // A reply that is ALL chatter keeps its text rather than extracting to
+  // nothing -- an empty document helps nobody, and the card would otherwise
+  // offer a download of zero content.
+  const allChatter = "Sure, here you go.";
+  const extracted = extractDocumentContent(allChatter, { stripChatter: true });
+  assert.equal(extracted.content, "Sure, here you go.");
+});
+
+/* --- the fence drives the UI, so markers never leak --------------------- */
+
+test("the fence is detectable, so a card is shown and markers never render raw", () => {
+  assert.equal(hasDocumentFence(FENCED_REPLY), true);
+  assert.equal(hasDocumentFence(UNFENCED_REPLY), false);
+  assert.equal(hasDocumentFence(NORMAL_REPLY), false);
+});
+
+test("stripping markers leaves the reply readable if it is ever displayed raw", () => {
+  const stripped = stripDocumentMarkers(FENCED_REPLY);
+  assert.doesNotMatch(stripped, /<<<FILE>>>|<<<END FILE>>>/);
+  assert.match(stripped, /Jordan Avery/);
+  assert.match(stripped, /Sure!/, "display keeps the conversation; only the FILE drops it");
 });

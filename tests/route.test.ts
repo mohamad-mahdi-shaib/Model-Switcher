@@ -672,9 +672,12 @@ test("a request for a Word document tells the model the app can produce one", as
       assert.equal(response.status, 200);
       const instruction = systemInstructionOf(mock.calls[0]);
       assert.ok(instruction, "a file request must carry a system instruction");
-      assert.match(instruction, /Save as/);
-      assert.match(instruction, /\.docx/);
+      assert.match(instruction, /download button/i);
       assert.match(instruction, /never say you cannot create files/i);
+      // It must NOT tell the user to go hunting for a menu: the card has the
+      // button, and duplicate instructions are how a reply ends up padded
+      // with "to save this, use ..." boilerplate.
+      assert.match(instruction, /do not explain how to save/i);
     });
   } finally {
     mock.restore();
@@ -703,7 +706,7 @@ test("every file wording that was reported, and the obvious neighbours, are reco
         assert.equal(response.status, 200, content);
         const instruction = systemInstructionOf(mock.calls[0]);
         assert.ok(instruction, `not recognised as a file request: ${content}`);
-        assert.match(instruction, /Save as/, content);
+        assert.match(instruction, /download button/i, content);
       }
     });
   } finally {
@@ -750,7 +753,7 @@ test("the capability note does not displace the user's own preferences", async (
       const instruction = systemInstructionOf(mock.calls[0]) ?? "";
       assert.match(instruction, /preferred name is "Sam"/);
       assert.match(instruction, /Be concise\./);
-      assert.match(instruction, /Save as/);
+      assert.match(instruction, /download button/i);
     });
   } finally {
     mock.restore();
