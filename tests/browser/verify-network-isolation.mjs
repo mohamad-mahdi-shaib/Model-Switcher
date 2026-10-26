@@ -55,15 +55,22 @@ log(
 // composer's own resulting disabled state" (checked next). Checking
 // immediately, same tick, intermittently read the DOM before that chain
 // finished.
-await sleep(300);
-
-// Confirm the app itself actually observed that failure honestly (it did
-// not silently pretend the probe succeeded) -- the composer should now be
-// disabled, since availability could not be determined.
-const degraded = await evaluate(page, () => {
-  const ta = document.querySelector("textarea");
-  return { disabled: ta ? ta.disabled : null };
-});
+// POLLED, not slept for. The chain between "CDP intercepted the probe" and
+// "the DOM reflects the composer's disabled state" is several async hops --
+// the fetch promise rejecting, the app's own `.catch()`, `setAvailability({})`,
+// then React re-rendering -- and a fixed delay races it. A 300 ms sleep was
+// enough most of the time and not all of it: this check failed roughly one
+// run in five, which is worse than useless, because a flaky assertion gets
+// ignored precisely when it starts reporting something real.
+let degraded = { disabled: null };
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  degraded = await evaluate(page, () => {
+    const ta = document.querySelector("textarea");
+    return { disabled: ta ? ta.disabled : null };
+  });
+  if (degraded.disabled === true) break;
+  await sleep(100);
+}
 log(
   degraded.disabled === true,
   "2. the app degrades safely when its own network is unavailable -- the composer is disabled rather than allowing a send that could not possibly succeed",

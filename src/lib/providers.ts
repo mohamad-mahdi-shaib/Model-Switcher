@@ -45,20 +45,6 @@ export type Provider = {
 
 export const PROVIDERS: readonly Provider[] = [
   { id: "gemini", label: "Gemini", enabled: true, accent: "#6f7f9b", vision: true },
-  {
-    id: "gpt",
-    // Responsive UI refinement: the reviewer asked for consistent
-    // user-facing names -- "Gemini" and "OpenAI" -- rather than "GPT". The
-    // internal id stays "gpt" (it is not user-facing: it is the wire value,
-    // the .env key lookup, and the data-provider/CSS-selector hook), so
-    // nothing about persistence, the API contract, or existing saved
-    // conversations changes.
-    label: "OpenAI",
-    enabled: true,
-    note: "Not connected — no OPENAI_API_KEY configured on the server.",
-    accent: "#4f8c72",
-    vision: true,
-  },
   /*
    * Project 3, reached through OpenRouter. Claude Sonnet 4.5 and Qwen2.5-VL
    * 72B were removed in the catalogue-simplification pass: Gemini and OpenAI
@@ -92,7 +78,7 @@ export const PROVIDERS: readonly Provider[] = [
      * reachable while that key is being sorted out. See `models.ts`.
      */
     id: "or-gpt",
-    label: "OpenAI (via OpenRouter)",
+    label: "OpenAI",
     enabled: true,
     note: "Not connected — no OPENROUTER_API_KEY configured on the server.",
     accent: "#4f8c72",
@@ -127,6 +113,20 @@ export const PROVIDERS: readonly Provider[] = [
 const MIGRATED_PROVIDER_IDS: Record<string, ProviderId> = {
   "or-claude": "gemini",
   "or-qwen": "gemini",
+  /**
+   * The DIRECT OpenAI integration, hidden from the selector while its key is
+   * rejected (a live 401 `invalid_api_key`). It is not deleted: the adapter,
+   * its tests and its registry entry all stay, so re-listing it here is a
+   * one-line change once the key is valid.
+   *
+   * Migrating to `or-gpt` rather than to Gemini because it is literally the
+   * same model -- `gpt-5.6-luna`, reached through OpenRouter instead of
+   * api.openai.com -- so a conversation that was using OpenAI carries on
+   * using OpenAI. Without this a saved conversation would keep an id that
+   * `isProviderEnabled` now rejects, and every send from it would be refused
+   * as "provider disabled".
+   */
+  gpt: "or-gpt",
 };
 
 export function migrateProviderId(id: string | undefined | null): ProviderId {

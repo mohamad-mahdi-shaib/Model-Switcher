@@ -9,6 +9,7 @@ import {
   DEFAULT_IMAGE_MODEL,
 } from "@/lib/models";
 import { DEFAULT_PROVIDER, migrateProviderId, PROVIDERS } from "@/lib/providers";
+import { getProvider } from "@/server/providers/registry";
 import type { WireMessage } from "@/lib/chat";
 import { migrateBackgroundId } from "@/lib/backgrounds";
 
@@ -265,12 +266,25 @@ test("an image is serialised for the OpenRouter vision model, not stripped", () 
   assert.ok(parts.some((p) => p.type === "image"), "the image part must survive");
 });
 
-test("the two vision models are the direct Gemini and OpenAI integrations", () => {
+test("Gemini and OpenAI both remain selectable vision models", () => {
   const vision = PROVIDERS.filter((p) => p.vision && p.enabled).map((p) => p.id);
   assert.ok(vision.includes("gemini"), "Gemini must remain a selectable vision model");
-  assert.ok(vision.includes("gpt"), "OpenAI must remain a selectable vision model");
-  // Adding the OpenRouter vision model must not have displaced either.
+  // OpenAI is still offered -- reached through OpenRouter rather than
+  // directly, while the direct key is rejected. Same model either way, so
+  // what matters is that OpenAI is still there and still does vision.
+  assert.ok(vision.includes("or-gpt"), "OpenAI must remain a selectable vision model");
   assert.ok(vision.length >= 3, "all three vision models should be selectable");
+});
+
+test("the direct OpenAI integration is hidden from the selector, but NOT deleted", () => {
+  assert.equal(
+    PROVIDERS.some((p) => p.id === "gpt"),
+    false,
+    "a provider whose key is rejected should not be offered",
+  );
+  // The adapter still exists and is still registered, so re-listing it is a
+  // one-line change once the key is valid.
+  assert.equal(getProvider("gpt")?.id, "gpt", "the adapter is still reachable server-side");
 });
 
 test("the removed models are no longer selectable anywhere", () => {
@@ -320,9 +334,16 @@ test("a conversation saved with a removed model id migrates to a real one", () =
 });
 
 test("current ids pass through migration unchanged", () => {
-  for (const id of ["gemini", "gpt", "or-deepseek"] as const) {
+  for (const id of ["gemini", "or-gpt", "or-deepseek"] as const) {
     assert.equal(migrateProviderId(id), id);
   }
+});
+
+test("a conversation saved on the direct OpenAI moves to the SAME model, routed", () => {
+  // Not to Gemini: `or-gpt` is gpt-5.6-luna reached through OpenRouter, the
+  // very model the direct adapter targets, so a conversation that was using
+  // OpenAI carries on using OpenAI.
+  assert.equal(migrateProviderId("gpt"), "or-gpt");
 });
 
 test("the background migration shares the same prototype-safety guard", () => {

@@ -96,7 +96,7 @@ export const OPENROUTER_CHAT_MODELS: readonly OpenRouterModel[] = [
      */
     id: "or-gpt",
     openrouterId: "openai/gpt-5.6-luna",
-    label: "OpenAI (via OpenRouter)",
+    label: "OpenAI",
     // Confirmed from OpenRouter's catalogue: input_modalities includes
     // "image", and `tools` is in supported_parameters.
     capabilities: { vision: true, imageOutput: false },

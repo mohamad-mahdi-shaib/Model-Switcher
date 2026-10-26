@@ -408,7 +408,14 @@ let page_;
   // configured, the DEFAULT provider (Gemini) is what is unconfigured on a
   // fresh session -- selecting the working OpenAI option (usable, since it
   // IS configured) must clear that setup screen rather than leaving it stuck.
-  const page = await open({ gemini: { configured: false, reason: "GEMINI_API_KEY is not set." }, gpt: { configured: true, model: "gpt-mock-model" } });
+  // "OpenAI" is the OpenRouter-routed entry now; the direct one is hidden
+  // while its key is rejected. The scenario is unchanged: the DEFAULT
+  // provider is unconfigured, and choosing a configured one must clear the
+  // setup screen rather than leaving it stuck.
+  const page = await open({
+    gemini: { configured: false, reason: "GEMINI_API_KEY is not set." },
+    "or-gpt": { configured: true, model: "openai-mock-model" },
+  });
   page_ = page;
   const beforeClick = await evaluate(page, () => document.querySelector("main")?.textContent || "");
   const chosen = await selectProvider(page, "OpenAI");
@@ -428,16 +435,24 @@ let page_;
   // unavailable provider (see ChatHeader.tsx's `usable` guard, unchanged by
   // F5), so the only way an unconfigured provider becomes the active one is
   // restored state, exactly like this.
-  const gptDraft = { ...seededState([]).conversations[0], providerId: "gpt", messages: [] };
+  // OpenAI is now reached through OpenRouter (`or-gpt`) -- the direct
+  // integration is hidden from the selector while its key is rejected -- so
+  // the variable an unconfigured OpenAI names is OPENROUTER_API_KEY. The
+  // property under test is unchanged: the setup screen must name the ACTIVE
+  // provider's own variable, never Gemini's.
+  const gptDraft = { ...seededState([]).conversations[0], providerId: "or-gpt", messages: [] };
   const page = await open(
-    { gpt: { configured: false, reason: "OPENAI_API_KEY is not set." }, gemini: { configured: true, model: "gemini-mock-model" } },
+    {
+      "or-gpt": { configured: false, reason: "OPENROUTER_API_KEY is not set." },
+      gemini: { configured: true, model: "gemini-mock-model" },
+    },
     { version: 1, conversations: [gptDraft], activeId: gptDraft.id },
   );
   page_ = page;
   await sleep(200);
   const setupText = await evaluate(page, () => document.querySelector("main")?.textContent || "");
   log(/OpenAI is not configured/.test(setupText), "F5.6 a restored OpenAI-active conversation names OpenAI, not Gemini, when OpenAI is the one unconfigured", JSON.stringify(setupText.slice(0, 80)));
-  log(/OPENAI_API_KEY/.test(setupText) && !/GEMINI_API_KEY/.test(setupText), "F5.7 the setup screen names OPENAI_API_KEY, not GEMINI_API_KEY");
+  log(/OPENROUTER_API_KEY/.test(setupText) && !/GEMINI_API_KEY/.test(setupText), "F5.7 the setup screen names the ACTIVE provider's own key variable, not GEMINI_API_KEY");
   await screenshot(page, `${OUT}/f5-setup-gpt-only-gemini-configured.png`);
   await page.close();
 }

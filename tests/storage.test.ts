@@ -86,7 +86,7 @@ test("migrating the provider id preserves messages and image attachments", () =>
   assert.equal(restored?.messages[1].content, "a screenshot");
 });
 
-test("a conversation on a still-current model is untouched by the migration", () => {
+test("a current model is untouched, and a hidden one migrates to its equivalent", () => {
   fake.setItem(
     STORAGE_KEY,
     JSON.stringify({
@@ -96,8 +96,11 @@ test("a conversation on a still-current model is untouched by the migration", ()
     }),
   );
   const { state } = loadConversations();
-  assert.equal(state?.conversations[0].providerId, "or-deepseek");
-  assert.equal(state?.conversations[1].providerId, "gpt");
+  assert.equal(state?.conversations[0].providerId, "or-deepseek", "still selectable, so untouched");
+  // The direct OpenAI integration is hidden while its key is rejected, so a
+  // conversation on it moves to the same model reached through OpenRouter --
+  // not to Gemini, and not left on an id that can no longer send.
+  assert.equal(state?.conversations[1].providerId, "or-gpt");
 });
 
 test("round-trips conversations and the active id", () => {

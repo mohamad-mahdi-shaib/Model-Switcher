@@ -52,7 +52,13 @@ export const MOCK = `
     // very first GET) to simulate a single-key setup.
     availability: {
       gemini: { configured: true, model: "gemini-mock-model" },
-      gpt: { configured: true, model: "gpt-mock-model" },
+      // OpenAI is reached through OpenRouter -- the direct integration is
+      // hidden from the selector while its key is rejected. A test that
+      // selects "OpenAI" by label picks this one, so it must be reported
+      // configured or the entry renders unusable and nothing happens.
+      "or-gpt": { configured: true, model: "openai-mock-model" },
+      "or-mistral": { configured: true, model: "mistral-mock-model" },
+      "or-deepseek": { configured: true, model: "deepseek-mock-model" },
     },
     // F5: when set, the NEXT POST fails outright with this normalized error
     // instead of streaming -- the same shape route.ts's errorResponse()
