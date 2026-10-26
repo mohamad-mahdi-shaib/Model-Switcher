@@ -1,8 +1,10 @@
 import { test } from "node:test";
+import { MAX_DOCUMENT_CHARS, MAX_SHEET_ROWS } from "@/lib/documents";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx";
 import { Document, Packer, Paragraph, HeadingLevel } from "docx";
 import { parseDocument, sniffDocumentKind, looksBinary, DocumentParseError } from "@/server/documents/parse";
+import { chunkSections } from "@/server/documents/embed";
 import { documentKindFromName, validateDocumentFile, MAX_DOCUMENT_BYTES } from "@/lib/documents";
 
 /**
@@ -243,4 +245,90 @@ test("a mislabelled file is refused before reaching a parser", async () => {
     (error: unknown) =>
       error instanceof DocumentParseError && /do not match its file extension/.test((error as Error).message),
   );
+});
+
+/* ============================ large documents ============================ */
+
+/**
+ * Acceptance criterion: "Large documents handled without errors."
+ *
+ * Every fixture here is genuinely larger than a model's context window, and
+ * larger than this app's own ceilings, so the behaviour under test is what
+ * happens AT the limit -- not whether a big file is merely accepted.
+ *
+ * The property that matters is not "it survives": it is that a partial read
+ * is REPORTED. A document silently truncated to 1.5M characters, answered
+ * from as though complete, is the failure mode worth guarding against.
+ */
+
+const LOREM =
+  "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. ";
+
+test("a 2M-character document is capped, and SAYS it was capped", async () => {
+  const bytes = new TextEncoder().encode((LOREM.repeat(20) + "\n\n").repeat(850));
+  assert.ok(bytes.length > 2_000_000, "fixture must exceed the char ceiling");
+
+  const parsed = await parseDocument(bytes, "huge.txt");
+  assert.equal(parsed.meta.chars, MAX_DOCUMENT_CHARS, "read exactly up to the ceiling");
+  assert.equal(parsed.meta.truncated, true);
+  assert.ok(
+    parsed.warnings.some((w) => /first 1,500,000 characters/.test(w)),
+    `truncation must be reported: ${JSON.stringify(parsed.warnings)}`,
+  );
+});
+
+test("a capped document still chunks cleanly, every chunk citable", async () => {
+  const bytes = new TextEncoder().encode((LOREM.repeat(20) + "\n\n").repeat(850));
+  const parsed = await parseDocument(bytes, "huge.txt");
+  const chunks = chunkSections(parsed.sections);
+
+  assert.ok(chunks.length > 100, `expected many chunks, got ${chunks.length}`);
+  for (const chunk of chunks) {
+    assert.ok(chunk.ref.length > 0, "a chunk with no citation cannot be quoted back");
+    assert.ok(chunk.text.length <= 6_000, `chunk too large to embed: ${chunk.text.length}`);
+  }
+});
+
+test("a 12,000-row spreadsheet stops at the row cap and names the sheet", async () => {
+  const XLSX = await import("xlsx");
+  const rows: (string | number)[][] = [["ID", "Region", "Revenue"]];
+  for (let i = 1; i <= 12_000; i += 1) rows.push([i, `Region ${i % 20}`, i * 13.5]);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), "Big");
+  const bytes = new Uint8Array(XLSX.write(workbook, { bookType: "xlsx", type: "array" }));
+
+  const parsed = await parseDocument(bytes, "huge.xlsx");
+  assert.equal(parsed.meta.rows, MAX_SHEET_ROWS);
+  assert.equal(parsed.meta.truncated, true);
+  assert.ok(
+    parsed.warnings.some((w) => /Big/.test(w) && /5,000/.test(w)),
+    `the sheet and the cap must both be named: ${JSON.stringify(parsed.warnings)}`,
+  );
+  // Still usable: every surviving row block is citable to a cell range.
+  const chunks = chunkSections(parsed.sections);
+  assert.ok(chunks.length > 0);
+  assert.ok(chunks.every((chunk) => /Big!/.test(chunk.ref)), "A1-style refs survive truncation");
+});
+
+test("a large DOCX and a large code file are read in full, under the ceiling", async () => {
+  const { Document, Packer, Paragraph, HeadingLevel } = await import("docx");
+  const children = [];
+  for (let section = 0; section < 40; section += 1) {
+    children.push(new Paragraph({ heading: HeadingLevel.HEADING_2, text: `Section ${section}` }));
+    for (let p = 0; p < 10; p += 1) children.push(new Paragraph(`S${section}P${p}: ${LOREM.repeat(12)}`));
+  }
+  const docx = new Uint8Array(await Packer.toBuffer(new Document({ sections: [{ children }] })));
+  const parsedDocx = await parseDocument(docx, "huge.docx");
+  assert.ok(parsedDocx.meta.chars > 500_000, `expected a big document: ${parsedDocx.meta.chars}`);
+  assert.equal(parsedDocx.meta.truncated, false, "under the ceiling, so nothing is dropped");
+  assert.ok(parsedDocx.sections.length > 100);
+
+  const code = Array.from(
+    { length: 9_000 },
+    (_, i) => `export function fn${i}(a: number): number { return a * ${i} + 1; }`,
+  ).join("\n");
+  const parsedCode = await parseDocument(new TextEncoder().encode(code), "huge.ts");
+  assert.ok(parsedCode.meta.chars > 500_000);
+  assert.equal(parsedCode.kind, "code");
+  assert.ok(parsedCode.sections.every((s) => /lines \d+-\d+/.test(s.ref)), "line-range refs throughout");
 });

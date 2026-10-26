@@ -21,6 +21,11 @@ was actually run, and anything not verified is named as not verified.
 | — | Live verification of multi-file comparison | done — 20/20 |
 | — | Commit and push | done |
 | — | Deploy to Vercel production | done — verified live |
+| 8 | Fix extraction failing on every request (503, no retry) | done — live 21/21 |
+| 9 | One shared retry helper; retry behaviour actually tested | done |
+| 10 | PDF no longer refused over a stray symbol | done — confirmed live by the user |
+| 11 | Generate a document from a request, not the whole chat message | done — live |
+| 12 | Editing an uploaded file, and large-document limits | done — live |
 
 ---
 
@@ -30,12 +35,79 @@ was actually run, and anything not verified is named as not verified.
 | --- | --- |
 | `npx tsc --noEmit` | clean |
 | `npx eslint src tests` | clean |
-| `npm test` | **424 pass · 0 fail** |
+| `npm test` | **495 pass · 0 fail** |
 | `npm run build` | clean, 5 routes |
-| Browser suites (8 files) | **344 pass · 0 fail** |
+| Browser suites (8 files) | **365 pass · 0 fail** |
 | `node tests/verify-no-secret-leak.mjs` | **PASS** — 5 secrets × 25 client files, 0 leaks |
 
-Test growth across the project: 249 (start) → 264 → 292 → 331 → 376 → 399 → 424.
+Test growth: 249 (start) → 264 → 292 → 331 → 376 → 399 → 424 → 473 → 491 → 495.
+
+---
+
+## Against the brief
+
+Every row below was checked against running code, and the live column says
+what was exercised against the real deployment rather than against a test.
+
+### Acceptance criteria
+
+| Criterion | State | Evidence |
+| --- | --- | --- |
+| Same Vercel deployment, extended | met | `model-switcher.vercel.app`, same project; no new service added |
+| PDF, DOCX, XLSX and code uploaded and queried | met | live upload + grounded answers with citations |
+| At least one structured extraction feature | met | Invoice and Contract schemas, live 21/21 |
+| At least one file-generation feature with download | met | Word, PDF, Excel, JSON, Markdown, code — PDF confirmed live by the user |
+| Large documents handled without errors | met | 2M characters and 12,000 rows, capped **and reported**; 4 permanent tests |
+| Existing chat and image features still work | met | 365 browser checks pass; chat, documents and file generation exercised against the live deployment, and image generation confirmed live by the project owner |
+
+### Scope
+
+| Item | State |
+| --- | --- |
+| Upload and parse PDF, DOCX, XLSX/CSV, code, text/Markdown | 7 kinds, 38 extensions, type decided by magic bytes |
+| Ask questions, summarise, compare multiple files | live: single-file Q&A, overview sampling, 2-file comparison across two formats |
+| Extract structured data into JSON or a spreadsheet | Zod-constrained, self-audited, JSON + XLSX download |
+| Generate **and edit** downloadable files | generation live-confirmed; editing verified live — see below |
+| Documents larger than a context window | 1.5M character / 5,000 row ceilings, truncation always reported |
+| Files, history and context across model switches | verified live on three models from one upload |
+
+### Editing, specifically
+
+The brief asks for "generate **and edit** downloadable files". There is no
+separate edit code path, and deliberately so: editing is retrieval and
+generation composed. The uploaded file is already in context through RAG, the
+model writes the revised document, and that becomes the new file.
+
+Verified live against production: an uploaded `.docx` agreement, asked for an
+edited version changing 60 days' notice to 30 and Net 45 to Net 30. The reply
+cited the original (`agreement.docx — "Termination"`, `— "Fees"`), applied
+both edits, preserved the untouched facts (the parties, the USD 4,800 fee),
+and fenced the document so the file carries no conversation.
+
+### Context across model switches, specifically
+
+One file uploaded once, then the same question asked on Gemini (direct),
+Mistral (OpenRouter) and DeepSeek (OpenRouter). All three answered correctly
+and cited the file, because retrieval happens in the route rather than in an
+adapter — the grounding is provider-neutral by construction.
+
+### Where the stack differs from the brief's examples
+
+The brief names libraries with "e.g.", so these are choices rather than
+omissions, but they are choices worth stating.
+
+| Brief's example | Used here | Why |
+| --- | --- | --- |
+| Supabase pgvector | Vercel Blob + exact cosine search | A conversation holds at most 10 files, so a query compares a few thousand 768-dimension unit vectors — microseconds. pgvector would add a service, a schema and a credential to solve a problem at a scale this app does not reach. Called "a persistent vector store with exact search", never "pgvector". |
+| pdf-lib | jsPDF | Already a dependency from the conversation-export feature. Its limitation (WinAnsi fonts, so no Arabic or CJK) is handled explicitly rather than hidden: symbols are substituted, and PDF is withheld with a reason when more than a tenth of the text is undrawable. |
+| unpdf or pdf-parse | unpdf | Ships a serverless PDF.js build; per-page extraction is what makes `p. 4` citations real. |
+| mammoth, SheetJS, docx, Zod | all used as named | — |
+
+One correction to the brief's description of the existing stack: **this app
+does not use shadcn/ui**. The interface is a custom glassmorphic design
+system built over Tailwind. Nothing in Project 4 required changing that, and
+swapping component libraries now would risk every existing feature for no
+functional gain.
 
 ---
 

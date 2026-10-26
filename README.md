@@ -9,7 +9,7 @@ behind one provider-neutral abstraction layer.
 **Verification status, stated precisely.** Chat against Gemini and OpenAI is
 verified against the live APIs. The document workspace -- parsing, chunking,
 embedding, storage, retrieval, extraction and file generation -- is verified by
-424 automated tests and 344 real-browser checks, including round trips through
+495 automated tests and 365 real-browser checks, including round trips through
 the actual file formats and a full store round trip against a stand-in blob
 service, **plus a live end-to-end run** (`tests/live/verify-documents-live.mjs`,
 19/19) in which a real PDF invoice was uploaded, embedded through Gemini,
@@ -354,7 +354,7 @@ server-side persistence and no sync between devices.
 npm test
 ```
 
-424 tests, no network access and no model quota consumed:
+495 tests, no network access and no model quota consumed:
 
 - **Markdown** — safety (`javascript:` / `data:` links stripped, HTML never
   treated as markup) and streaming stability (every prefix of a fenced block
@@ -414,7 +414,7 @@ node tests/browser/verify-documents.mjs      #  44 checks — upload, tray, RAG 
 node tests/browser/verify-files.mjs          #  26 checks — tables and real file downloads
 ```
 
-All eight pass against the current build (**344 checks total**). `/api/documents`
+All eight pass against the current build (**365 checks total**). `/api/documents`
 and `/api/extract` are intercepted at Chrome's own network layer alongside
 `/api/chat`, so a browser run can never spend embedding or extraction quota;
 each run asserts the interception count is 0.
@@ -770,10 +770,34 @@ figures look settled, and they are carried into both downloads: a warning
 visible on screen but missing from the spreadsheet is exactly how a
 questionable number becomes a trusted one.
 
+### Asking for a file, and editing one
+
+Ask for a document — *"create a PDF with my name and skills"* — and the reply
+arrives as a **file card**: a filename, what kind of file it is, and a
+download button. The text is one click away behind "Show text".
+
+The file contains the DOCUMENT, not the conversation around it. The model is
+asked to fence the document between markers, which gives this app an exact
+boundary rather than a hope that it will not editorialise; when the fence is
+ignored, a short conversational opener or closer is trimmed instead. Without
+that, "Sure, here is your PDF:" ends up inside the PDF — which is exactly
+what used to happen.
+
+**Editing** an uploaded file needs no separate feature, because it is
+retrieval and generation composed: the file is already in context through RAG,
+the model writes the revised version, and that becomes the new file. Verified
+live — an uploaded agreement, asked for 30 days' notice instead of 60 and Net
+30 instead of Net 45, came back with both edits applied, the untouched clauses
+preserved, and the original cited.
+
+Markers never render in the transcript, and never reach a saved file.
+
 ### Saving an answer as a real file
 
-Any settled answer offers **Save as**: Word, PDF, Excel, Markdown, or a code
-file with the language's real extension.
+Any settled answer also offers **Save as**: Word, PDF, Excel, JSON, Markdown,
+or a code file with the language's real extension. That exports **that
+message** and is deliberately kept distinct from generating a document: a
+reply opening "Here's how that works" keeps its first line when saved.
 
 "Real" means reopenable. Word headings are Word headings, lists are real lists
 that renumber, tables are real tables; spreadsheet numbers are numeric cells
