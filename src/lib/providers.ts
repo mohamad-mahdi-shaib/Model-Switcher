@@ -22,7 +22,7 @@
  * `storage.ts`) as well as a wire value, so removed ids are migrated rather
  * than left dangling -- see `migrateProviderId` below.
  */
-export type ProviderId = "gemini" | "gpt" | "or-mistral" | "or-deepseek";
+export type ProviderId = "gemini" | "gpt" | "or-gpt" | "or-mistral" | "or-deepseek";
 
 export type Provider = {
   id: ProviderId;
@@ -82,6 +82,20 @@ export const PROVIDERS: readonly Provider[] = [
     enabled: true,
     note: "Not connected — no OPENROUTER_API_KEY configured on the server.",
     accent: "#b4714a",
+    vision: true,
+  },
+  {
+    /**
+     * The same OpenAI model as the `gpt` entry above, reached through
+     * OpenRouter instead of directly. Both are offered: the direct one is
+     * the project's second direct integration, and this one keeps OpenAI
+     * reachable while that key is being sorted out. See `models.ts`.
+     */
+    id: "or-gpt",
+    label: "OpenAI (via OpenRouter)",
+    enabled: true,
+    note: "Not connected — no OPENROUTER_API_KEY configured on the server.",
+    accent: "#4f8c72",
     vision: true,
   },
   {

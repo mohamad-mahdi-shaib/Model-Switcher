@@ -77,6 +77,31 @@ export const OPENROUTER_CHAT_MODELS: readonly OpenRouterModel[] = [
     capabilities: { vision: true, imageOutput: false },
   },
   {
+    /**
+     * OpenAI's model reached THROUGH OpenRouter, alongside the direct
+     * integration rather than replacing it.
+     *
+     * Added because the direct `OPENAI_API_KEY` was rejected with a live
+     * 401 `invalid_api_key` -- a credential problem, not a code one, and not
+     * a billing one (that would classify as INSUFFICIENT_CREDIT). An
+     * OpenRouter key cannot simply be pasted into `OPENAI_API_KEY`: the
+     * direct adapter speaks the Responses API at api.openai.com, which
+     * OpenRouter does not serve. Routing the same model through the
+     * OpenRouter adapter needs no new credential and no new adapter.
+     *
+     * It is `openai/gpt-5.6-luna` -- the SAME model the direct adapter is
+     * configured for -- so the two entries differ only in how they are
+     * reached. The direct one stays: it is the project's second direct
+     * integration, and it starts working again the moment the key is valid.
+     */
+    id: "or-gpt",
+    openrouterId: "openai/gpt-5.6-luna",
+    label: "OpenAI (via OpenRouter)",
+    // Confirmed from OpenRouter's catalogue: input_modalities includes
+    // "image", and `tools` is in supported_parameters.
+    capabilities: { vision: true, imageOutput: false },
+  },
+  {
     id: "or-deepseek",
     openrouterId: "deepseek/deepseek-chat-v3.1",
     label: "DeepSeek V3.1",
